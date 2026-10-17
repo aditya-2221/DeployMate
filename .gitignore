@@ -1,0 +1,45 @@
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Build outputs
+dist/
+build/
+coverage/
+
+# Generated reports
+reports/
+*.log
+npm-debug.log*
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE settings
+.vscode/
+.idea/
+
+# Local databases and data
+*.sqlite
+*.sqlite3
+*.db
+
+# Test artifacts
+playwright-report/
+test-results/
+
+# Docker overrides and local configuration
+docker-compose.override.yml
