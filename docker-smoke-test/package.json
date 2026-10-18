@@ -1,0 +1,11 @@
+
+{
+  "name": "deploymate-docker-smoke-test",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node -e \"console.log('DeployMate Docker smoke test passed')\"",
+    "test:fail": "node -e \"console.error('Intentional failure for DeployMate testing'); process.exit(7)\"",
+    "test:timeout": "node -e \"setInterval(() => console.log('still running'), 1000)\""
+  }
+}
