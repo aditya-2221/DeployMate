@@ -1,14 +1,14 @@
 # DeployMate Learning Journal
 
-**Session date:** 17 October 2026  
+**Session date:** 18 October 2026  
 **Developer:** Aditya Sharma  
-**Status:** Read-only discovery and script inventory completed; execution engine not implemented.
+**Status:** Phase 1.1 execution contract and result model added on a feature branch; local validation pending.
 
 ## Session summary
 
-DeployMate's read-only repository inspection engine now discovers packages and declared scripts, inventories recognized quality checks, and identifies operational `dev` and `start` scripts. The developer confirmed all 26 automated tests pass.
+The existing read-only discovery implementation was reviewed before changes. The local baseline was confirmed by the developer: 26 tests passed, 0 failed. Docker Desktop was installed and verified with `docker --version`, `docker info`, and `docker run hello-world`. The Docker engine is available through the WSL 2 backend.
 
-The next milestone is controlled check execution and evidence collection. Docker Desktop installation and verification are planned for the next session.
+Phase 1.1 introduces an execution result schema and a runner contract shape. It does not connect them to the CLI and does not execute project scripts. New tests were added but have not yet been run in the local environment; no pass result is claimed for them.
 
 ## Concepts learned
 
@@ -39,80 +39,77 @@ The check-discovery module currently recognizes:
 
 The operational-script module recognizes `dev` and `start`. These are recognition rules, not proof that a command succeeds.
 
-### 3. `for...of`
+### 3. Discovery status versus execution status
+
+A discovery record's `available` status means a matching non-empty script declaration was found. It does not mean the script ran or passed. The execution result has its own status:
+
+- `not_run`: no execution has been attempted.
+- `passed`: process exit code is 0.
+- `failed`: process completed with a non-zero exit code.
+- `timed_out`: execution exceeded its allowed time.
+- `blocked`: policy prevented execution.
+- `skipped`: execution was intentionally not attempted.
+
+The result schema requires exit code 0 for `passed` and a non-zero exit code for `failed`. Other statuses may have a null exit code, such as when a process was never started.
+
+### 4. Why structured errors matter
+
+The error field is either `null` or an object with a required `code`, a required human-readable `message`, and optional `details`. A stable code can be used by the CLI, UI, or tests without parsing free-form text. The message explains the problem to a person. Details can provide supporting context, but must not expose secrets.
+
+### 5. Schema validation with Zod
+
+Zod validates the shape and constraints of data at runtime. The new result schema checks required component and check type fields, the allowed status set, timestamp formats, non-negative durations, structured error fields, and relationships between status and exit code.
+
+- `schema.parse(value)` returns validated data or throws a validation error.
+- `schema.safeParse(value)` returns an object indicating success or failure without throwing for validation failures.
+
+The result factory uses `parse` to avoid returning invalid records. The validation helper uses `safeParse` when callers need to inspect a validation result.
+
+### 6. Replaceable runner contract
+
+A future runner is expected to expose:
 
 ```js
-for (const script of componentScripts) {
-  // Process one script at a time.
-}
+runCheck(check, options) -> executionResult
 ```
 
-The loop processes each element of the array. During each iteration, `script` refers to the current element. `const` prevents reassignment of that loop variable during the iteration; it does not make the loop run only once.
+The runner may eventually use Docker or another controlled backend. Higher-level code should consume the same result shape regardless of backend. The current `assertRunner()` helper only checks that the object has a `runCheck` function; it does not invoke the runner.
 
-### 4. Conditional branches
+### 7. Extended execution metadata
 
-```js
-if (script.status === "available") {
-  // Print available-script details.
-} else {
-  // Print the unavailable-script message.
-}
-```
+The result records nullable `executionId`, `runner`, `workingDirectory`, `startedAt`, and `finishedAt` in addition to the check identity, command, status, exit code, stdout, stderr, duration, and error. Nullable values distinguish unknown/not-yet-recorded data from a real value. Start and finish timestamps must either both be present or both be null.
 
-The strict equality operator `===` compares the current status with the string `"available"`. This chooses a reporting branch; it does not execute the command.
+These fields are metadata contracts. A valid schema record is not proof that a process really ran; execution evidence must later be produced by a trusted runner.
 
-### 5. Template literals
-
-```js
-console.log(
-  `  [AVAILABLE] ${script.type}: ${script.command}`
-);
-```
-
-Backticks create a template literal. `${script.type}` and `${script.command}` insert the values of those properties into the output.
-
-### 6. Filtering arrays
-
-```js
-const componentScripts = operationalScripts.filter(
-  (script) => script.component === component.path
-);
-```
-
-`filter()` creates a new array containing only records whose `component` matches the current component path. It does not modify the original array.
-
-### 7. Discovery is not execution
-
-The report prints `Execution status: NOT RUN` for available scripts. The current reporting logic uses a fixed label; it does not dynamically check whether a command has run. When execution is implemented, the report must display actual runner results.
-
-## Current implementation files
+## Phase 1.1 implementation files
 
 | File | Responsibility |
 |---|---|
-| `agent/src/index.js` | CLI entry point; orchestrates discovery and report generation |
-| `agent/src/report.js` | Prints the discovery report |
-| `agent/src/discovery/discoverPackages.js` | Discovers repository packages |
-| `agent/src/discovery/detectPackageManager.js` | Detects package manager and lockfile information |
-| `agent/src/discovery/discoverWorkspaces.js` | Discovers workspace-related package structure |
-| `agent/src/checks/discoverChecks.js` | Identifies recognized quality-check scripts |
-| `agent/src/checks/discoverOperationalScripts.js` | Identifies `dev` and `start` scripts |
-| `agent/test/` | Automated tests for discovery, checks, operational scripts, and reporting |
+| `agent/src/execution/result.js` | Status constants, Zod schema, result factory and validation helper |
+| `agent/src/execution/runner.js` | Runner shape assertion; no command execution |
+| `agent/test/executionResult.test.js` | Result defaults, statuses, metadata and invalid-input cases |
+| `agent/test/executionRunner.test.js` | Runner contract shape tests |
 
-## Confirmed CLI usage
+## Safety boundary
 
-Run from `C:\DeployMate\agent`:
+No discovered project script was executed during this milestone. The new module does not spawn processes, create containers, mount filesystems, or change the current CLI behavior. Docker is installed and operational, but Docker integration remains future work.
 
-```cmd
-npm run dev -- "C:\DevLink"
-```
+## Confirmed local environment
 
-The current workflow inspects package metadata and does not execute the discovered package scripts.
+- Repository: `C:\DeployMate`
+- Agent package: `C:\DeployMate\agent`
+- Node.js: `v26.11.1`
+- npm: `11.20.0`
+- Docker: `29.8.2`
+- WSL 2 backend: active
+- Pre-change test baseline: 26 passed, 0 failed
+- Working tree was clean before Phase 1.1 edits.
 
 ## Next learning goals
 
-1. Design a replaceable execution interface.
-2. Define a consistent execution-result model.
-3. Add timeouts, exit-code handling, stdout/stderr capture, and duration measurement.
-4. Use mocks for unit tests where practical.
-5. Integrate Docker only after its availability and behavior are verified.
+1. Run the complete test suite against the feature branch and fix any issues.
+2. Review schema semantics, especially timeout and process-start failures.
+3. Add deterministic execution orchestration only after agreeing on safety policy.
+4. Use harmless tests and mocks to cover exit codes, output, timeouts, cancellation, and cleanup.
+5. Integrate Docker isolation only after its security boundaries and resource limits are specified.
 6. Build evidence-backed diagnosis on top of real execution results.
