@@ -18,12 +18,24 @@
 
 **Goal:** Execute project checks safely and collect verifiable evidence.
 
-- Build a reusable command-execution interface.
+### Phase 1.1 — Execution contract and result model
+
+- Define a replaceable runner contract without invoking project scripts.
+- Add a validated result schema with execution metadata.
+- Define statuses: `not_run`, `passed`, `failed`, `timed_out`, `blocked`, and `skipped`.
+- Represent errors as structured objects.
+- Add unit tests for schema validation and runner shape.
+- Preserve the current discovery behavior and CLI flow.
+
+**Status:** Implemented on the `phase-1-1-execution-result-model` branch. Local test execution is pending; do not treat the new tests as passing until run locally.
+
+### Phase 1.2 — Controlled execution and isolation
+
 - Introduce Docker-based isolation for running project commands.
 - Capture command, working directory, exit code, standard output, standard error, and duration.
 - Apply timeouts and resource limits.
-- Distinguish between checks that are unavailable, not run, passed, failed, or timed out.
 - Prevent untrusted project scripts from running directly on the host.
+- Handle cancellation and container cleanup.
 - Store structured execution results for later analysis.
 
 **Deliverable:** DeployMate can run selected checks in an isolated environment and produce reproducible execution evidence.
@@ -147,11 +159,12 @@ The architecture must account for access to local repositories. A browser-based 
 ## Recommended Implementation Order
 
 1. **Repository discovery — completed:** Packages, scripts, checks, and reports.
-2. **Execution and evidence — next:** Isolated command execution and structured results.
-3. **Diagnostics:** Convert execution output into reliable findings.
-4. **AI analysis and planning:** Explain failures and recommend evidence-grounded fixes.
-5. **Approved repairs and verification:** Review changes, apply them with permission, and rerun checks.
-6. **UI, documentation, and deployment:** Turn the core workflow into a usable, demonstrable product.
+2. **Execution contract and result model — added on feature branch:** Validate locally before proceeding.
+3. **Execution and evidence:** Isolated command execution and structured results.
+4. **Diagnostics:** Convert execution output into reliable findings.
+5. **AI analysis and planning:** Explain failures and recommend evidence-grounded fixes.
+6. **Approved repairs and verification:** Review changes, apply them with permission, and rerun checks.
+7. **UI, documentation, and deployment:** Turn the core workflow into a usable, demonstrable product.
 
 ## Core Product Principle
 
