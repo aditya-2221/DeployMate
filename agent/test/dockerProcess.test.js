@@ -119,6 +119,110 @@ test("uses the verified immutable Node image digest", () => {
   );
 });
 
+
+test("enforces required Docker security restrictions", async (t) => {
+  const { result, calls } = await runWithMocks(
+    t,
+    [
+      { exitCode: 0 },
+      { exitCode: 0 },
+    ],
+  );
+
+  assert.equal(result.status, "passed");
+  assert.equal(calls.length, 2);
+
+  const args = calls[0].args;
+
+  // Network isolation
+  assert.equal(
+    args[args.indexOf("--network") + 1],
+    "none",
+  );
+
+  // Run as a non-root user
+  assert.equal(
+    args[args.indexOf("--user") + 1],
+    "1000:1000",
+  );
+
+  // Read-only container filesystem
+  assert.ok(args.includes("--read-only"));
+
+  // Remove Linux capabilities
+  assert.equal(
+    args[args.indexOf("--cap-drop") + 1],
+    "ALL",
+  );
+
+  // Prevent privilege escalation
+  assert.equal(
+    args[args.indexOf("--security-opt") + 1],
+    "no-new-privileges:true",
+  );
+
+  // Restrict writable temporary storage
+  assert.equal(
+    args[args.indexOf("--tmpfs") + 1],
+    "/tmp:rw,noexec,nosuid,size=64m",
+  );
+
+  // Mount the staged project read-only
+  const mountIndex = args.indexOf("--mount");
+  assert.notEqual(mountIndex, -1);
+  assert.match(
+    args[mountIndex + 1],
+    /type=bind,.*target=\/workspace,readonly$/,
+  );
+
+  // Use the pinned image digest, not a floating tag
+  assert.ok(args.includes(DOCKER_IMAGE));
+  assert.match(
+    DOCKER_IMAGE,
+    /^node@sha256:[a-f0-9]{64}$/,
+  );
+});
+
+test(
+  "redacts common credentials from captured Docker output",
+  async (t) => {
+    const sensitiveOutput = [
+      "Authorization: Bearer abc.def.ghi",
+      "password=super-secret-value",
+      'API_KEY="my-private-api-key"',
+      "token: hidden-token-value",
+      "Build failed in src/app.js",
+    ].join("\n");
+
+    const { result } = await runWithMocks(
+      t,
+      [
+        {
+          exitCode: 1,
+          stdout: sensitiveOutput,
+        },
+        {
+          exitCode: 0,
+        },
+      ],
+    );
+
+    assert.equal(result.status, "failed");
+
+    assert.doesNotMatch(
+      result.stdout,
+      /abc\.def\.ghi|super-secret-value|my-private-api-key|hidden-token-value/,
+    );
+
+    assert.match(result.stdout, /\[REDACTED\]/);
+
+    assert.match(
+      result.stdout,
+      /Build failed in src\/app\.js/,
+    );
+  },
+);
+
 test("rejects a relative staged workspace path", async () => {
   await assert.rejects(
     runDockerCheck({
@@ -211,6 +315,88 @@ test("rejects output limits above the configured maximum", async (t) => {
     /maxOutputBytes must be between/,
   );
 });
+
+test("applies validated memory, CPU, and process limits to Docker", async (t) => {
+  const { result, calls } = await runWithMocks(
+    t,
+    [
+      { exitCode: 0 },
+      { exitCode: 0 },
+    ],
+    {
+      memoryMb: 256,
+      cpuCount: 0.5,
+      processLimit: 32,
+    },
+  );
+
+  assert.equal(result.status, "passed");
+  assert.equal(calls.length, 2);
+
+  const dockerArgs = calls[0].args;
+
+  assert.equal(
+    dockerArgs[dockerArgs.indexOf("--memory") + 1],
+    "256m",
+  );
+
+  assert.equal(
+    dockerArgs[dockerArgs.indexOf("--cpus") + 1],
+    "0.5",
+  );
+
+  assert.equal(
+    dockerArgs[dockerArgs.indexOf("--pids-limit") + 1],
+    "32",
+  );
+});
+
+
+test("rejects invalid resource limits before spawning Docker", async (t) => {
+  const workspace = await createWorkspace(t);
+  const calls = [];
+
+  const runner = createDockerProcessRunner({
+    spawnImpl: (...args) => {
+      calls.push(args);
+      return fakeChild({ exitCode: 0 });
+    },
+  });
+
+  const invalidLimits = [
+    {
+      memoryMb: 127,
+      expectedError: /memoryMb must be between/,
+    },
+    {
+      cpuCount: 0.1,
+      expectedError: /cpuCount must be between/,
+    },
+    {
+      processLimit: 0,
+      expectedError: /processLimit must be between/,
+    },
+  ];
+
+  for (const { expectedError, ...limit } of invalidLimits) {
+    await assert.rejects(
+      runner.runDockerCheck({
+        stagedWorkspacePath: workspace,
+        script: "test",
+        expectedCommand: "node --test",
+        ...limit,
+      }),
+      expectedError,
+    );
+  }
+
+  assert.equal(
+    calls.length,
+    0,
+    "Docker must not start when a resource limit is invalid",
+  );
+});
+
 
 test("passes on exit code zero and always attempts cleanup", async (t) => {
   const { result, calls } = await runWithMocks(
@@ -356,6 +542,36 @@ test("bounds retained stdout and marks output truncation", async (t) => {
   assert.match(result.stdout, /0123/);
   assert.match(result.stdout, /output truncated/);
 });
+
+
+test("disables automatic npm lifecycle scripts", async (t) => {
+  const { result, calls } = await runWithMocks(
+    t,
+    [
+      { exitCode: 0 },
+      { exitCode: 0 },
+    ],
+  );
+
+  assert.equal(result.status, "passed");
+
+  const dockerArgs = calls[0].args;
+  const imageIndex = dockerArgs.indexOf(DOCKER_IMAGE);
+
+  assert.notEqual(imageIndex, -1);
+
+  assert.deepEqual(
+    dockerArgs.slice(imageIndex, imageIndex + 5),
+    [
+      DOCKER_IMAGE,
+      "npm",
+      "--ignore-scripts",
+      "run",
+      "test",
+    ],
+  );
+});
+
 
 test("cleanup failure cannot turn a passing check into success", async (t) => {
   const { result } = await runWithMocks(

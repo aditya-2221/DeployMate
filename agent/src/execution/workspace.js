@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { constants as fsConstants } from "node:fs";
+
 const EXCLUDED_DIRECTORIES = new Set([
   ".git",
   "node_modules",
@@ -43,6 +45,7 @@ export async function createStagedWorkspace({
   projectRoot,
   maxFiles = DEFAULT_MAX_FILES,
   maxBytes = DEFAULT_MAX_BYTES,
+  tempDirectory = os.tmpdir(),
 } = {}) {
   if (
     typeof projectRoot !== "string" ||
@@ -61,6 +64,12 @@ export async function createStagedWorkspace({
     throw new TypeError("maxBytes must be a positive integer.");
   }
 
+  if (typeof tempDirectory !== "string" ||!tempDirectory.trim()) {
+    throw new TypeError(
+      "tempDirectory must be a non-empty path.",
+    );
+  }
+
   const sourceRoot = await fs.realpath(
     path.resolve(projectRoot)
   );
@@ -72,12 +81,16 @@ export async function createStagedWorkspace({
   }
 
   const temporaryRoot = await fs.mkdtemp(
-    path.join(os.tmpdir(), "deploymate-workspace-")
+    path.join(
+      path.resolve(tempDirectory),
+      "deploymate-workspace-",
+    ),
   );
 
   let fileCount = 0;
   let totalBytes = 0;
 
+  
   async function copyDirectory(source, destination) {
     const entries = await fs.readdir(source, {
       withFileTypes: true,
@@ -87,10 +100,10 @@ export async function createStagedWorkspace({
       const sourcePath = path.join(source, entry.name);
       const destinationPath = path.join(
         destination,
-        entry.name
+        entry.name,
       );
 
-      // Never copy common secret files or secret key material.
+      // Never copy common secret files or private-key material.
       if (isSensitiveFilename(entry.name)) {
         continue;
       }
@@ -103,10 +116,7 @@ export async function createStagedWorkspace({
         continue;
       }
 
-      /*
-       * Dirent symlinks are intentionally not followed.
-       * This avoids copying files from outside the project root.
-       */
+      // Never intentionally follow symlinks.
       if (entry.isSymbolicLink()) {
         continue;
       }
@@ -126,30 +136,138 @@ export async function createStagedWorkspace({
         continue;
       }
 
-      const stats = await fs.stat(sourcePath);
+      let sourceHandle;
+      let destinationHandle;
 
-      fileCount += 1;
-      totalBytes += stats.size;
+      try {
+        // O_NOFOLLOW prevents opening a final-component symlink
+        // on platforms that support this flag.
+        const noFollowFlag = fsConstants.O_NOFOLLOW ?? 0;
 
-      if (fileCount > maxFiles) {
-        throw new Error(
-          `Workspace exceeds the ${maxFiles}-file limit.`
+        sourceHandle = await fs.open(
+          sourcePath,
+          fsConstants.O_RDONLY | noFollowFlag,
         );
-      }
 
-      if (totalBytes > maxBytes) {
-        throw new Error(
-          `Workspace exceeds the ${maxBytes}-byte limit.`
+        const stats = await sourceHandle.stat();
+
+        if (!stats.isFile()) {
+          continue;
+        }
+
+        // Check whether the source path was replaced after readdir
+        // or while the file was being opened.
+        const currentStats = await fs.lstat(sourcePath);
+
+        if (
+          currentStats.isSymbolicLink() ||
+          !currentStats.isFile() ||
+          currentStats.dev !== stats.dev ||
+          currentStats.ino !== stats.ino
+        ) {
+          throw new Error(
+            `Source file changed during staging: ${entry.name}`,
+          );
+        }
+
+        // Reject files exceeding the remaining byte budget.
+        if (stats.size > maxBytes - totalBytes) {
+          throw new Error(
+            `Workspace exceeds the ${maxBytes}-byte limit.`,
+          );
+        }
+
+        if (fileCount >= maxFiles) {
+          throw new Error(
+            `Workspace exceeds the ${maxFiles}-file limit.`,
+          );
+        }
+
+        // "wx" prevents overwriting an existing staged file.
+        // The staged copy is readable/writable only by its owner.
+        destinationHandle = await fs.open(
+          destinationPath,
+          "wx",
+          0o600,
         );
+
+        const buffer = Buffer.alloc(64 * 1024);
+        let copiedBytes = 0;
+
+        while (true) {
+          const { bytesRead } = await sourceHandle.read(
+            buffer,
+            0,
+            buffer.length,
+            null,
+          );
+
+          if (bytesRead === 0) {
+            break;
+          }
+
+          // Enforce the limit on actual bytes read, in case the
+          // source grows after its initial size was checked.
+          if (
+            bytesRead >
+            maxBytes - totalBytes - copiedBytes
+          ) {
+            throw new Error(
+              `Workspace exceeds the ${maxBytes}-byte limit.`,
+            );
+          }
+
+          let offset = 0;
+
+          // Handle partial writes rather than assuming the whole
+          // buffer is written in a single operation.
+          while (offset < bytesRead) {
+            const { bytesWritten } =
+              await destinationHandle.write(
+                buffer,
+                offset,
+                bytesRead - offset,
+              );
+
+            if (bytesWritten === 0) {
+              throw new Error(
+                "Could not finish writing staged file.",
+              );
+            }
+
+            offset += bytesWritten;
+          }
+
+          copiedBytes += bytesRead;
+        }
+
+        
+        // Verify that the source remained stable during copying.
+        const finalStats = await sourceHandle.stat();
+
+        if (
+          copiedBytes !== stats.size ||
+          finalStats.size !== stats.size ||
+          finalStats.mtimeMs !== stats.mtimeMs ||
+          finalStats.ctimeMs !== stats.ctimeMs
+        ) {
+          throw new Error(
+            `Source file changed during staging: ${entry.name}`,
+          );
+        }
+
+        // Account for the file only after verification succeeds.
+        fileCount += 1;
+        totalBytes += copiedBytes;
+
+
+      } finally {
+        await destinationHandle?.close();
+        await sourceHandle?.close();
       }
-
-      await fs.copyFile(sourcePath, destinationPath);
-
-      // The copy is for inspection/build/test, not deployment
-      // with preserved executable permissions.
-      await fs.chmod(destinationPath, 0o600);
     }
   }
+
 
   try {
     await copyDirectory(sourceRoot, temporaryRoot);

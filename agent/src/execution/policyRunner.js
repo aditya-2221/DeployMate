@@ -9,6 +9,20 @@ import { createExecutionResult } from "./result.js";
  * This module authorizes operations but does not implement
  * operating-system process isolation or command execution.
  */
+
+function capRequestedLimit(requested, policyMaximum) {
+  if (requested === undefined) {
+    return policyMaximum;
+  }
+
+  // Preserve invalid values so the execution layer rejects them.
+  if (typeof requested !== "number") {
+    return requested;
+  }
+
+  return Math.min(requested, policyMaximum);
+}
+
 export function createPolicyAwareRunner({
   runner,
   policy = {},
@@ -38,10 +52,29 @@ export function createPolicyAwareRunner({
         };
       }
 
+      // Policy limits are authoritative. Callers may request stricter
+      // limits, but cannot increase resource consumption beyond policy.
+      const effectiveRunnerOptions = {
+        ...runnerOptions,
+      };
+
+      for (const key of [
+        "timeoutMs",
+        "maxOutputBytes",
+        "memoryMb",
+        "cpuCount",
+        "processLimit",
+      ]) {
+        effectiveRunnerOptions[key] = capRequestedLimit(
+          runnerOptions[key],
+          decision.limits[key],
+        );
+      }
+
       // Delegate only after policy authorization succeeds.
       const rawResult = await validatedRunner.runCheck(
         check,
-        runnerOptions,
+        effectiveRunnerOptions,
       );
 
       // Validate the runner's response before returning it.

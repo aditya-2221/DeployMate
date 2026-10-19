@@ -24,6 +24,9 @@ function validateOptions({
   expectedCommand,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES,
+  memoryMb = 512,
+  cpuCount = 1,
+  processLimit = 128,
 }) {
   if (
     typeof stagedWorkspacePath !== "string" ||
@@ -95,6 +98,37 @@ function validateOptions({
     );
   }
 
+  if (
+    !Number.isInteger(memoryMb) ||
+    memoryMb < 128 ||
+    memoryMb > 8192
+  ) {
+    throw new RangeError(
+      "memoryMb must be between 128 and 8192.",
+    );
+  }
+
+  if (
+    typeof cpuCount !== "number" ||
+    !Number.isFinite(cpuCount) ||
+    cpuCount < 0.25 ||
+    cpuCount > 8
+  ) {
+    throw new RangeError(
+      "cpuCount must be between 0.25 and 8.",
+    );
+  }
+
+  if (
+    !Number.isInteger(processLimit) ||
+    processLimit < 1 ||
+    processLimit > 1024
+  ) {
+    throw new RangeError(
+      "processLimit must be between 1 and 1024.",
+    );
+  }
+
   return {
     stagedWorkspacePath,
     componentRelativePath: normalizedComponentPath,
@@ -103,6 +137,9 @@ function validateOptions({
     expectedCommand,
     timeoutMs,
     maxOutputBytes,
+    memoryMb,
+    cpuCount,
+    processLimit,
   };
 }
 
@@ -215,6 +252,26 @@ async function validateStagedWorkspace(options) {
   };
 }
 
+
+function redactSensitiveOutput(value) {
+  return value
+    // Authorization headers and bearer tokens.
+    .replace(
+      /\b(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi,
+      "$1[REDACTED]",
+    )
+    // Common credential assignments, including quoted values.
+    .replace(
+      /(\b(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret)\b\s*[:=]\s*)(["']?)[^\s"'`,;]+/gi,
+      "$1$2[REDACTED]",
+    )
+    // Common GitHub and OpenAI-style API key prefixes.
+    .replace(
+      /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,})\b/g,
+      "[REDACTED]",
+    );
+}
+
 function createBoundedCollector(maxBytes) {
   let output = Buffer.alloc(0);
   let truncated = false;
@@ -243,7 +300,9 @@ function createBoundedCollector(maxBytes) {
     },
 
     value() {
-      const text = output.toString("utf8");
+      const text = redactSensitiveOutput(
+        output.toString("utf8"),
+      );
 
       return truncated
         ? `${text}\n[DeployMate: output truncated]`
@@ -465,13 +524,13 @@ async function runDockerCheckWithSpawn(options, spawnImpl) {
     "no-new-privileges:true",
 
     "--pids-limit",
-    "128",
+    String(validated.processLimit),
 
     "--memory",
-    "512m",
+    `${validated.memoryMb}m`,
 
     "--cpus",
-    "1",
+    String(validated.cpuCount),
 
     "--tmpfs",
     "/tmp:rw,noexec,nosuid,size=64m",
@@ -484,11 +543,13 @@ async function runDockerCheckWithSpawn(options, spawnImpl) {
 
     "--workdir",
     containerWorkingDirectory,
-
+    
     DOCKER_IMAGE,
     "npm",
+    "--ignore-scripts",
     "run",
     validated.script,
+
   ];
 
   const execution = await runDockerCommand(

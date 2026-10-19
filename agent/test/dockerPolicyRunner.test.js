@@ -469,6 +469,53 @@ test("workspace cleanup failure is not confused with a successful check", async 
   });
 });
 
+
+test("adapter failure does not trigger a second workspace cleanup", async () => {
+  await withProject(async (projectRoot) => {
+    const harness = createStagingHarness({
+      sourceRoot: projectRoot,
+    });
+
+    const runner = createPolicyAwareDockerRunner({
+      projectRoot,
+      policy: BASE_POLICY,
+      stageWorkspace: harness.stageWorkspace,
+      dockerRunner: {
+        async runDockerCheck() {
+          harness.calls.docker += 1;
+
+          return successfulDockerResult({
+            status: "unexpected-status",
+          });
+        },
+      },
+    });
+
+    const response = await runner.runCheck(CHECK);
+
+    assert.equal(harness.calls.docker, 1);
+    assert.equal(
+      harness.calls.cleanup,
+      1,
+      "An adapter error must not cause a second cleanup attempt",
+    );
+
+    assert.ok(response.result);
+    assert.equal(response.result.status, "not_run");
+    assert.equal(
+      response.result.error.code,
+      "RUNNER_SETUP_FAILED",
+    );
+    assert.match(
+      response.result.error.message,
+      /Unsupported Docker result status/,
+    );
+
+    assertExecutionResult(response.result);
+  });
+});
+
+
 test("Docker receives execution limits from caller options", async () => {
   await withProject(async (projectRoot) => {
     const harness = createStagingHarness({
@@ -500,6 +547,58 @@ test("Docker receives execution limits from caller options", async () => {
       harness.calls.dockerOptions[0].maxOutputBytes,
       64 * 1024,
     );
+  });
+});
+
+test("caller options cannot exceed policy resource limits", async () => {
+  await withProject(async (projectRoot) => {
+    const harness = createStagingHarness({
+      sourceRoot: projectRoot,
+    });
+
+    const runner = createPolicyAwareDockerRunner({
+      projectRoot,
+      policy: {
+        ...BASE_POLICY,
+        limits: {
+          ...BASE_POLICY.limits,
+          timeoutMs: 10_000,
+          maxOutputBytes: 8_192,
+          memoryMb: 256,
+          cpuCount: 0.5,
+          processLimit: 32,
+        },
+      },
+      stageWorkspace: harness.stageWorkspace,
+      dockerRunner: {
+        async runDockerCheck(options) {
+          harness.calls.docker += 1;
+          harness.calls.dockerOptions.push(options);
+
+          return successfulDockerResult();
+        },
+      },
+    });
+
+    const response = await runner.runCheck(CHECK, {
+      approvalGranted: true,
+      timeoutMs: 60_000,
+      maxOutputBytes: 64 * 1024,
+      memoryMb: 1024,
+      cpuCount: 2,
+      processLimit: 128,
+    });
+
+    assert.equal(response.result.status, "passed");
+    assert.equal(harness.calls.docker, 1);
+
+    const options = harness.calls.dockerOptions[0];
+
+    assert.equal(options.timeoutMs, 10_000);
+    assert.equal(options.maxOutputBytes, 8_192);
+    assert.equal(options.memoryMb, 256);
+    assert.equal(options.cpuCount, 0.5);
+    assert.equal(options.processLimit, 32);
   });
 });
 

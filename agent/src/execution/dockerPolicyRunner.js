@@ -70,6 +70,7 @@ export function createPolicyAwareDockerRunner({
   const executionRunner = {
     async runCheck(check, options = {}) {
       let stagedWorkspace;
+      let cleanupAttempted = false;
 
       try {
         // Revalidate the project and selected script before staging.
@@ -99,6 +100,9 @@ export function createPolicyAwareDockerRunner({
             expectedCommand: validated.command,
             timeoutMs: options.timeoutMs,
             maxOutputBytes: options.maxOutputBytes,
+            memoryMb: options.memoryMb,
+            cpuCount: options.cpuCount,
+            processLimit: options.processLimit,
           });
         } catch (error) {
           rawResult = {
@@ -121,7 +125,10 @@ export function createPolicyAwareDockerRunner({
           };
         }
 
-        // Workspace cleanup is required even when Docker fails.
+        // Mark the attempt before awaiting it so an exception cannot
+        // cause the outer catch to attempt cleanup a second time.
+        cleanupAttempted = true;
+
         try {
           await stagedWorkspace.cleanup();
         } catch (error) {
@@ -152,12 +159,15 @@ export function createPolicyAwareDockerRunner({
           check,
         });
       } catch (error) {
-        // If staging succeeded but execution setup failed, clean up.
-        if (stagedWorkspace) {
+        // Clean up only if a workspace exists and no cleanup attempt
+        // has already started. Never retry implicitly here.
+        if (stagedWorkspace && !cleanupAttempted) {
+          cleanupAttempted = true;
+
           try {
             await stagedWorkspace.cleanup();
           } catch {
-            // Preserve the original setup error.
+            // Preserve the primary setup/adaptation error.
             // Cleanup telemetry should be added separately.
           }
         }
