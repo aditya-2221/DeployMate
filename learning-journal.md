@@ -525,3 +525,145 @@ At the end of each work session, append a dated entry containing:
 11. **Next steps** — the next small task and how success will be verified.
 
 Keep previous sessions intact. Do not replace the journal with a short summary. Add detail when new code, questions, failures, or design decisions arise. If a session's exact conversation or source details are unavailable, explicitly mark the gap rather than inventing what was said.
+
+---
+
+# Learning Journal Entry — 20 October 2026
+## Docker runner recovery, regression analysis, and dependency-install security boundary
+
+### Why this session happened
+
+The goal was to recover from a regression introduced while exploring dependency installation for DeployMate, preserve the working Docker execution baseline, and document the technical learning for future interview revision. The journal must record what was asked, what was learned, why decisions were made, and what remains unverified—not merely list a status.
+
+### Product and execution-flow context
+
+DeployMate is a software lifecycle and release-readiness agent. Its current deterministic flow is:
+
+`project discovery → check inventory → policy decision → validation → staged workspace → Docker execution → cleanup → result normalization → diagnostics/report`
+
+AI analysis, user-approved repairs, verification, a UI, release-readiness reports, and deployment integrations remain future phases unless implementation evidence establishes otherwise.
+
+Core principles:
+- Discovery inspects project metadata without executing arbitrary scripts.
+- Execution is explicit and policy-gated.
+- Authorization and sandboxing are different, complementary controls.
+- A temporary staged workspace reduces exposure of the original project tree.
+- Results should accurately distinguish pass, failure, timeout, policy block, skip, and not-run.
+- Execution time, output, memory, CPU, and process count must be bounded.
+- Ordinary checks must not gain network access implicitly.
+- Dependency installation is a separate, higher-risk capability because package installation can run lifecycle scripts and access the network.
+
+### Regression: symptom, root cause, recovery
+
+**Symptom:** A previous dependency-installation patch caused a large set of Docker process tests to fail.
+
+**Root cause:** A dependency-install-only network requirement was added to shared Docker process option validation. Ordinary checks use the same validator, so they began requiring installation-specific network configuration even when installation had not been requested. This is an example of an optional feature changing the default path because its precondition was placed in shared validation.
+
+**Recovery:** Restore the known-good `dockerProcess.js` baseline and keep installation-specific guardrails scoped to the explicit opt-in/policy-aware path. Do not reintroduce a global guard that makes ordinary checks depend on dependency-install configuration.
+
+**Engineering lesson:** During a broad regression, return to a known-good baseline, narrow the change, and test the normal path separately from the new opt-in path. Do not weaken the baseline merely to make an incomplete feature appear functional.
+
+### Relevant modules and their responsibilities
+
+- `src/execution/policy.js`: evaluates whether a check/action is allowed, requires approval, or is blocked; policy also controls network/secrets capabilities and resource limits. Approval is not a universal override for hard policy denials.
+- `src/execution/policyRunner.js`: policy gate around the underlying runner; constrains execution limits and avoids passing policy-only metadata down to the process runner. Optional installation must request its capability explicitly.
+- `src/execution/dockerPolicyRunner.js`: orchestrates policy evaluation, workspace staging, Docker invocation, cleanup, and result adaptation. Cleanup must not be attempted twice if result adaptation fails after cleanup has already been attempted.
+- `src/execution/dockerProcess.js`: validates process options, builds Docker arguments, launches/observes the Docker CLI, limits output, enforces timeouts, and attempts cleanup. The described baseline uses a pinned Node image digest, no network for ordinary checks, non-root execution, read-only filesystem, dropped capabilities, no-new-privileges, resource limits, bounded output, and timeout handling. Docker is a risk-reduction layer, not an absolute security guarantee.
+- `src/execution/workspace.js`: stages a filtered project subset into a temporary workspace and cleans it up. Filename-based exclusions are not complete secret detection; path traversal, symlinks, partial-copy failures, and cleanup need dedicated tests.
+- `src/execution/result.js` / `resultAdapter.js`: normalize process outcomes into a structured contract. Statuses include `not_run`, `passed`, `failed`, `timed_out`, `blocked`, and `skipped`. A passed result requires exit code 0; a failed result requires a non-null non-zero exit code. Do not fabricate an exit code when a timeout or infrastructure failure prevented one.
+- `src/diagnostics/diagnose.js` and `src/report.js`: turn discovery warnings, policy decisions, and execution outcomes into deterministic findings and a terminal report. Later AI analysis should interpret evidence, not replace it or invent facts.
+
+### Latest test evidence
+
+The developer shared output from `npm test` run at `C:\DeployMate\agent`:
+
+| Metric | Reported result |
+|---|---:|
+| Tests | 136 |
+| Passed | 136 |
+| Failed | 0 |
+| Cancelled / skipped / todo | 0 |
+| Duration | about 15 seconds |
+
+**Evidence provenance:** this is developer-shared terminal output; this documentation update did not independently execute the tests.
+
+Relevant scenarios include:
+1. Installation is denied when policy disables network access.
+2. Installation fails closed when no restricted network is configured.
+3. Ordinary check requests do not implicitly request network access.
+4. Adapter failure does not trigger a second workspace cleanup.
+5. Docker timeout handling is tested by an intentional timeout smoke test.
+
+The timeout smoke test intentionally times out after 5,000 ms and reports `status: timed_out`, `exitCode: null`, `signal: SIGTERM`, error `CHECK_TIMEOUT`, successful cleanup, and `processDidNotClose: false`. The timeout is the scenario under test, not a test-suite failure.
+
+### Dependency installation: current status and security requirements
+
+**Current status: not a working installer.** The opt-in behavior safely refuses to proceed when the required restricted network is not configured. Tests prove the fail-closed guardrail, not successful dependency installation.
+
+The staged workspace excludes `node_modules`, so checks that rely on installed tools such as `eslint` or `vite` may fail until a secure dependency-preparation stage exists.
+
+Simply running `npm install` is not enough:
+- lifecycle scripts can execute arbitrary code;
+- package installation needs network access;
+- a JavaScript URL allowlist cannot stop a child process from making direct network requests;
+- a normal Docker bridge does not enforce a domain-level egress allowlist;
+- npm, pnpm, and Yarn differ in lockfile and install semantics, while the current Docker process implementation supports npm only;
+- disabling all lifecycle scripts can break packages, while enabling them blindly increases risk;
+- shared caches create cross-project contamination and cache-poisoning concerns.
+
+Before implementation, define:
+1. Explicit user and policy opt-in.
+2. Egress restriction enforced outside the untrusted process.
+3. Package-manager/lockfile consistency rules.
+4. A deliberate lifecycle-script policy.
+5. Isolated caches or no cache initially.
+6. Timeout, output, memory, CPU, and process limits.
+7. Cleanup and auditable structured results.
+8. Tests for success, denial, malicious lifecycle scripts, lockfile mismatch, timeout, and cleanup.
+
+If real egress enforcement is unavailable, keep installation disabled rather than falling back to unrestricted networking.
+
+### Questions and answers to preserve for revision
+
+**Why did the change break ordinary checks?** The installation-specific precondition was put in shared validation, which ordinary checks also call.
+
+**Why did restoring the baseline help?** It removed the misplaced precondition from the normal process path and narrowed the regression surface.
+
+**Does a passing fail-closed test mean installation works?** No. It proves that the operation refuses to run without a security prerequisite; successful installation remains unimplemented/unverified.
+
+**Why is an application-level URL allowlist insufficient?** It only constrains requests routed through that application logic. Untrusted lifecycle scripts can attempt direct network access, so egress must be enforced by a boundary they cannot bypass.
+
+**Authorization versus sandboxing?** Authorization determines whether an operation may start. Sandboxing constrains what the process can access or do after it starts. Both are required.
+
+**Why is a timeout not just a failed exit code?** A timed-out process may not return a valid exit code. The result should preserve `timed_out` and a null exit code rather than inventing one.
+
+**What does 136/136 prove?** It is evidence that the tested cases passed in the reported environment. It does not prove complete security, successful dependency installation, universal package-manager support, or production readiness.
+
+### Interview revision: 60-second architecture explanation
+
+DeployMate discovers project components and scripts without executing them. When a check is requested, policy decides whether it may run. Validation confirms the selected script and paths, a filtered temporary workspace is staged, and Docker executes the check with restrictions and resource limits. Cleanup is attempted, the low-level outcome is normalized into a shared result schema, and deterministic diagnostics/reporting explain what happened. AI analysis, approved repairs, verification, UI, and deployment integrations are later phases.
+
+### Uncertainties that must remain explicit
+
+- GitHub `main` was previously observed to differ from the local dependency-install opt-in work and tests. Verify the current repository before claiming source synchronization.
+- Successful dependency installation has not been demonstrated.
+- Docker containment and secret filtering have not been proven complete.
+- The reported test run was supplied by the developer, not independently reproduced here.
+- End-to-end npm, pnpm, and Yarn support has not been established.
+- Production readiness has not been established.
+
+### Next session plan
+
+1. Confirm local branch/files and whether opt-in safety changes are present.
+2. Preserve 136/136 as the latest developer-reported baseline.
+3. Design the dependency-preparation flow and trust boundaries before coding.
+4. Decide package-manager/lockfile rules and lifecycle-script policy.
+5. Select and validate genuine egress enforcement; otherwise leave installation disabled.
+6. Define cache, resource-limit, cleanup, and audit behavior.
+7. Test ordinary no-network execution separately from opt-in installation.
+8. Make one isolated change, run focused tests, then the full suite, and record exact output.
+
+### Standard for future entries
+
+Every session entry should capture what was asked and why, starting state, exact files/modules, code flow, changed versus proposed work, design trade-offs, questions and answers, errors/root causes/fixes, commands and test evidence with provenance, interview revision notes, uncertainties, and acceptance criteria. Preserve previous entries; do not invent code changes, questions, or test results.
+
