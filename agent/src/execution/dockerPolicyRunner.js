@@ -9,7 +9,7 @@ import { runDockerCheck } from "./dockerProcess.js";
 import { adaptDockerResult } from "./resultAdapter.js";
 import { createExecutionResult } from "./result.js";
 
-function createSetupFailure(check, error) {
+function createSetupFailure(check, error, code = "RUNNER_SETUP_FAILED") {
   return createExecutionResult({
     executionId: randomUUID(),
     component: check.component,
@@ -26,7 +26,7 @@ function createSetupFailure(check, error) {
     stderr: "",
     durationMs: null,
     error: {
-      code: "RUNNER_SETUP_FAILED",
+      code,
       message:
         error instanceof Error
           ? error.message
@@ -38,8 +38,10 @@ function createSetupFailure(check, error) {
 /**
  * Adds staging and Docker execution behind the existing policy gate.
  *
- * This runner does not install dependencies. The staged workspace
- * must already contain everything needed for the selected check.
+ * Dependency installation is not enabled until DeployMate has a verified
+ * egress-restricted installation network. An explicit install request is
+ * policy-checked first, then fails closed with an actionable result rather
+ * than silently using an unrestricted Docker bridge network.
  */
 export function createPolicyAwareDockerRunner({
   projectRoot,
@@ -69,6 +71,17 @@ export function createPolicyAwareDockerRunner({
 
   const executionRunner = {
     async runCheck(check, options = {}) {
+      if (options.installDependencies === true) {
+        const error = new Error(
+          "Dependency installation is not configured. DeployMate requires a verified egress-restricted Docker network or registry proxy before it can download dependencies. Existing network-isolated checks remain available without installation."
+        );
+        return createSetupFailure(
+          check,
+          error,
+          "DEPENDENCY_INSTALL_NETWORK_NOT_CONFIGURED",
+        );
+      }
+
       let stagedWorkspace;
       let cleanupAttempted = false;
 

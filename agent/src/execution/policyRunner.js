@@ -34,14 +34,32 @@ export function createPolicyAwareRunner({
       const {
         approvalGranted = false,
         requestedCapabilities = {},
+        installDependencies = false,
+        dependencyInstallTargets = [],
         ...runnerOptions
       } = options;
+
+      if (typeof installDependencies !== "boolean") {
+        throw new TypeError("installDependencies must be a boolean.");
+      }
+
+      // Dependency installation is a distinct, explicitly requested
+      // capability. Do not let a caller's generic requestedCapabilities
+      // object accidentally omit the network authorization check.
+      const effectiveRequestedCapabilities = installDependencies
+        ? {
+            networkAccess: true,
+            networkPurpose: "dependency_install",
+            networkTargets: dependencyInstallTargets,
+            secrets: requestedCapabilities?.secrets ?? false,
+          }
+        : requestedCapabilities;
 
       const decision = evaluateExecutionPolicy({
         check,
         policy,
         approvalGranted,
-        requestedCapabilities,
+        requestedCapabilities: effectiveRequestedCapabilities,
       });
 
       // Never dispatch operations that aren't authorized.
@@ -56,6 +74,9 @@ export function createPolicyAwareRunner({
       // limits, but cannot increase resource consumption beyond policy.
       const effectiveRunnerOptions = {
         ...runnerOptions,
+        // Preserve the existing runner-options shape unless installation
+        // was explicitly requested.
+        ...(installDependencies ? { installDependencies: true } : {}),
       };
 
       for (const key of [
