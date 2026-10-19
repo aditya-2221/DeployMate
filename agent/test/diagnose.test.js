@@ -157,3 +157,45 @@ test("rejects malformed top-level inputs", () => {
     /executionResults must be an array/,
   );
 });
+
+test("reports malformed execution results instead of silently ignoring them", () => {
+  const findings = diagnose({
+    discoveryResult: makeDiscovery(),
+    executionResults: [null, "invalid-result", { component: "backend" }],
+  });
+
+  assert.equal(findings.length, 3);
+  assert.ok(
+    findings.every(
+      (finding) => finding.code === "INVALID_EXECUTION_RESULT",
+    ),
+  );
+
+  assert.deepEqual(
+    findings.map((finding) => finding.evidence.index),
+    [0, 1, 2],
+  );
+});
+
+test("reports malformed policy entries instead of silently ignoring them", () => {
+  const findings = diagnose({
+    discoveryResult: makeDiscovery(),
+    policyDecisions: [
+      null,
+      { check: { component: "backend" } },
+      { decision: {} },
+    ],
+  });
+
+  assert.equal(findings.length, 3);
+  assert.ok(
+    findings.every(
+      (finding) => finding.code === "INVALID_POLICY_DECISION",
+    ),
+  );
+
+  assert.deepEqual(
+    findings.map((finding) => finding.evidence.index),
+    [0, 1, 2],
+  );
+});

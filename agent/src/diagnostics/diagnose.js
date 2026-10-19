@@ -168,8 +168,30 @@ export function diagnose({
     );
   }
 
-  for (const result of executionResults) {
-    if (!result || typeof result !== "object") {
+  
+  for (const [index, result] of executionResults.entries()) {
+    const isObject =
+      result !== null &&
+      typeof result === "object" &&
+      !Array.isArray(result);
+
+    if (!isObject || !nonEmptyString(result.status)) {
+      findings.push(
+        makeFinding({
+          code: "INVALID_EXECUTION_RESULT",
+          severity: "warning",
+          category: "execution",
+          component: getComponentPath(result?.component),
+          message:
+            "The execution result is malformed or is missing a valid status.",
+          evidence: {
+            index,
+            status: result?.status ?? null,
+          },
+          recommendation:
+            "Inspect the execution result at this index and validate its structure before using it for diagnostics.",
+        }),
+      );
       continue;
     }
 
@@ -187,7 +209,10 @@ export function diagnose({
           category: "execution",
           component: getComponentPath(result.component),
           message: "The execution result contains an unrecognized status.",
-          evidence: { status: result.status ?? null },
+          evidence: {
+            index,
+            status: result.status,
+          },
           recommendation:
             "Validate the execution result against the supported result schema.",
         }),
@@ -201,18 +226,19 @@ export function diagnose({
         category: "execution",
         component: getComponentPath(result.component),
         evidence: {
+          index,
           type: result.type ?? null,
           script: result.script ?? null,
           status: result.status,
           exitCode: result.exitCode ?? null,
-          error: result.error
-            ? {
-                code: result.error.code ?? null,
-                message: result.error.message ?? null,
-              }
-            : null,
+          error:
+            result.error && typeof result.error === "object"
+              ? {
+                  code: result.error.code ?? null,
+                  message: result.error.message ?? null,
+                }
+              : null,
         },
-        // Preserve the underlying execution error for diagnosis.
         message: result.error?.message
           ? `${diagnostic.message} ${result.error.message}`
           : diagnostic.message,
@@ -220,14 +246,39 @@ export function diagnose({
     );
   }
 
-  for (const entry of policyDecisions) {
-    if (!entry || typeof entry !== "object") {
-      continue;
-    }
 
-    const decision = entry.decision;
+  
+  for (const [index, entry] of policyDecisions.entries()) {
+    const isEntryObject =
+      entry !== null &&
+      typeof entry === "object" &&
+      !Array.isArray(entry);
 
-    if (!decision || typeof decision !== "object") {
+    const decision = isEntryObject ? entry.decision : null;
+
+    const isDecisionObject =
+      decision !== null &&
+      typeof decision === "object" &&
+      !Array.isArray(decision);
+
+    if (!isEntryObject || !isDecisionObject ||
+        !nonEmptyString(decision.decision)) {
+      findings.push(
+        makeFinding({
+          code: "INVALID_POLICY_DECISION",
+          severity: "warning",
+          category: "policy",
+          component: getComponentPath(entry?.check?.component),
+          message:
+            "The policy entry is malformed or is missing a valid decision.",
+          evidence: {
+            index,
+            decision: decision?.decision ?? null,
+          },
+          recommendation:
+            "Inspect the policy decision at this index and validate its structure before using it for diagnostics.",
+        }),
+      );
       continue;
     }
 
@@ -246,7 +297,8 @@ export function diagnose({
           component: getComponentPath(entry.check?.component),
           message: "The policy decision is not recognized.",
           evidence: {
-            decision: decision.decision ?? null,
+            index,
+            decision: decision.decision,
             code: decision.code ?? null,
           },
           recommendation:
@@ -263,6 +315,7 @@ export function diagnose({
         component: getComponentPath(entry.check?.component),
         message: decision.reason || diagnostic.message,
         evidence: {
+          index,
           decision: decision.decision,
           code: decision.code ?? null,
           reason: decision.reason ?? null,
@@ -273,6 +326,7 @@ export function diagnose({
       }),
     );
   }
+
 
   return findings;
 }
