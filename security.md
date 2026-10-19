@@ -1,6 +1,6 @@
 # DeployMate Security Notes
 
-**Last updated:** 19 October 2026  
+**Last updated:** 20 October 2026  
 **Security milestone:** Policy-aware Docker execution is implemented; edge-case and production security review continue.
 
 ## Threat model
@@ -44,13 +44,15 @@ The shared result schema distinguishes `not_run`, `passed`, `failed`, `timed_out
 
 ## Latest test evidence
 
-On 19 October 2026, the developer shared output showing 13/13 policy-aware Docker-runner integration tests and 113/113 full-suite tests passing. The timeout smoke test reported SIGTERM, successful cleanup, and process closure.
+On 20 October 2026, the developer shared output showing 136/136 full-suite tests passing (0 failures; approximately 15 seconds). The reported suite includes cases verifying that dependency installation is denied when network access is disabled, fails closed when a restricted network is not configured, and is not implicitly requested by ordinary checks. It also includes a test that adapter failure does not trigger a second workspace cleanup.
 
-These results cover the tested scenarios only. They do not prove complete isolation, comprehensive secret protection, or production readiness.
+A Docker timeout smoke test intentionally reaches a 5,000 ms timeout and reports `status: timed_out`, `exitCode: null`, `signal: SIGTERM`, `CHECK_TIMEOUT`, and successful cleanup/process closure.
 
-## Known review item
+**Evidence provenance:** these are results shared by the developer, not independently executed during this documentation update. Passing tests cover their tested scenarios only; they do not prove complete isolation, comprehensive secret protection, successful dependency installation, or production readiness.
 
-The outer catch in `dockerPolicyRunner.js` may attempt staged-workspace cleanup a second time if result adaptation throws after the first cleanup attempt. Existing tests cover some cleanup failure paths but do not establish this adapter-exception path. Add a regression test and fix only after confirming the behavior.
+## Cleanup review status
+
+The previously noted adapter-exception/double-cleanup concern now has a regression test in the developer-reported suite, which passes. Keep this as a tested edge case, not a claim that all cleanup failure modes are eliminated. Continue testing staging-copy failure, Docker daemon failure, timeout, cancellation, and cleanup errors separately.
 
 ## Production-use requirements
 
@@ -74,3 +76,37 @@ The outer catch in `dockerPolicyRunner.js` may attempt staged-workspace cleanup 
 - Review sensitive-file exclusions and log redaction.
 - Verify actual Docker restrictions and resource limits.
 - Reassess threat assumptions before adding dependency installation or network access.
+
+
+---
+
+## Security update — 20 October 2026
+
+### Dependency installation is not yet available as a successful workflow
+
+The explicit dependency-install opt-in currently **fails closed** when the required restricted-network mechanism is not configured. This is a guardrail, not a functioning installer. Do not describe dependency installation as implemented end-to-end.
+
+The staged workspace excludes `node_modules`; consequently, project checks that rely on installed tools (for example, `eslint` or `vite`) may fail until a separate dependency-preparation stage is implemented.
+
+### Network allowlisting must be enforced at the boundary
+
+An application-level URL/origin allowlist does not constrain arbitrary network calls made directly by an untrusted process or package lifecycle script. A normal Docker bridge network also does not, by itself, enforce a domain-level egress allowlist. Do not enable installation by merely turning on Docker networking and assuming the application allowlist is a security boundary.
+
+Before enabling dependency installation, require:
+1. Explicit user opt-in and a policy decision for the installation capability.
+2. Egress restrictions enforced outside the untrusted process and not bypassable by its child processes.
+3. Defined package-manager and lockfile compatibility rules. Current execution support must not be assumed to cover npm, pnpm, and Yarn equally.
+4. A deliberate lifecycle-script policy; package install scripts can execute arbitrary code.
+5. Isolated caches (or no shared cache initially) to reduce cross-project contamination and cache-poisoning risk.
+6. Existing resource controls, timeout, bounded output, workspace cleanup, and auditable structured results.
+7. Tests for successful installation under the intended boundary, denied network access, malicious lifecycle scripts, lockfile mismatch, timeout, and cleanup.
+
+If enforceable egress controls are unavailable, keep dependency installation disabled rather than falling back to unrestricted network access.
+
+### Ordinary checks must remain unaffected
+
+Installation-specific preconditions must not be inserted into shared Docker process validation in a way that causes ordinary checks to require installation-only configuration. Normal checks must continue to run with network access disabled by default. Test the normal no-network path separately from the explicit opt-in installation path.
+
+### Security claims and limits
+
+The reported 136/136 suite result is evidence for the tested behaviors, not proof of production readiness. Continue to treat repository scripts and dependencies as untrusted, and retain the distinction between policy authorization and OS/container isolation. Keep the original repository unmounted, minimize environment variables and host credentials, and treat secret filename filtering as incomplete.
