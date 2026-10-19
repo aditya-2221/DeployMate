@@ -68,3 +68,32 @@ Review the cleanup/error-handling path in `agent/src/execution/dockerPolicyRunne
 **Next:** investigate cleanup idempotence/attempt tracking, add regression coverage, rerun tests, and continue security review.
 
 **Unverified:** complete production readiness, absolute sandbox security, every cleanup/filesystem failure path, and all future roadmap capabilities.
+
+---
+
+## Latest handover — 20 October 2026
+
+### Current checkpoint
+
+The latest test output shared by the developer reports `npm test`: 136 passed, 0 failed, in about 15 seconds. Treat this as developer-reported evidence, not an independently reproduced result.
+
+A regression caused by placing a dependency-install-specific network requirement in shared Docker process validation was recovered by restoring the known-good `dockerProcess.js` baseline. The intended safety behavior remains fail-closed in the explicit installation opt-in path. Dependency installation itself is **not implemented as a successful end-to-end workflow**.
+
+### Important source-sync caveat
+
+The prior read-only review found that GitHub `main` did not contain all local dependency-install opt-in behavior and tests seen in the developer's latest local output. Verify the current local working tree and branch before claiming local source and GitHub are synchronized.
+
+### Next work
+
+1. Confirm branch and exact local files.
+2. Design dependency preparation before implementation.
+3. Define package-manager/lockfile compatibility and lifecycle-script behavior.
+4. Choose network egress enforcement that cannot be bypassed by an untrusted child process. If unavailable, keep installation disabled.
+5. Specify cache isolation, limits, cleanup, and audit evidence.
+6. Add separate tests for ordinary no-network checks and opt-in installation, including malicious lifecycle scripts and cleanup.
+7. Run focused tests and then the full suite; document actual outputs.
+
+### Documentation standard
+
+Continue the cumulative learning journal with the user's questions, answers, module responsibilities, control flow, errors and fixes, design trade-offs, test evidence/provenance, interview revision material, limitations, and next acceptance criteria. Do not shorten older entries or claim unverified implementation.
+
