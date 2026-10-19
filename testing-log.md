@@ -98,3 +98,37 @@ Passing tests do not establish arbitrary repository compatibility, complete sand
 9. Verify reports distinguish `not_run`, `blocked`, `skipped`, `passed`, `failed`, and `timed_out`.
 
 Do not mark a queued item complete until it is run and its actual result is recorded.
+
+---
+
+## Session update — 20 October 2026
+
+### Latest developer-reported full-suite result
+
+Command: `npm test`  
+Working directory reported by developer: `C:\DeployMate\agent`
+
+- Total: 136
+- Passed: 136
+- Failed: 0
+- Cancelled/skipped/todo: 0
+- Duration: approximately 15 seconds
+
+**Provenance:** user-shared terminal output; not independently rerun as part of this documentation change.
+
+### Dependency-install opt-in cases
+
+The reported suite includes tests confirming:
+- dependency installation is denied when policy disables network access;
+- installation fails closed when no restricted network is implemented;
+- ordinary checks do not implicitly request network access;
+- an adapter failure does not trigger a second workspace cleanup.
+
+The Docker timeout smoke test intentionally reaches its configured 5,000 ms timeout and verifies `timed_out`, `CHECK_TIMEOUT`, termination signal, cleanup, and process-close behavior. That expected timeout is not a failing test.
+
+### Scope of evidence
+
+These results do **not** demonstrate successful dependency installation. The current behavior is a safety guard that refuses installation without a real restricted-network mechanism. A normal Docker bridge and application-level URL allowlist do not constitute enforceable domain-level egress control. Keep installation disabled until the security boundary and its tests are implemented.
+
+Also, a passing suite does not prove complete Docker isolation, comprehensive secret detection, end-to-end pnpm/Yarn support, or production readiness.
+
