@@ -3,12 +3,13 @@ import { discoverPackages } from "./discovery/discoverPackages.js";
 import { discoverChecks } from "./checks/discoverChecks.js";
 import { discoverOperationalScripts } from "./checks/discoverOperationalScripts.js";
 import { createPolicyAwareDockerRunner } from "./execution/dockerPolicyRunner.js";
-import { createExecutionResult } from "./execution/result.js";
 import { diagnose } from "./diagnostics/diagnose.js";
 import { printReport } from "./report.js";
+import { orchestrateChecks } from "./execution/orchestrateChecks.js";
 
 function parseArguments(args) {
   const flags = new Set(["--run", "--approve"]);
+
   const options = {
     targetPath: null,
     run: false,
@@ -43,35 +44,9 @@ function parseArguments(args) {
   return options;
 }
 
-function createOrchestrationFailure(check, error) {
-  return createExecutionResult({
-    executionId: null,
-    component: check.component,
-    type: check.type,
-    script: check.script ?? null,
-    command: check.command ?? null,
-    status: "not_run",
-    runner: "docker",
-    workingDirectory: null,
-    startedAt: null,
-    finishedAt: null,
-    exitCode: null,
-    stdout: "",
-    stderr: "",
-    durationMs: null,
-    error: {
-      code: "ORCHESTRATION_FAILED",
-      message:
-        error instanceof Error
-          ? error.message
-          : "An unexpected orchestration error occurred.",
-    },
-  });
-}
-
 function printUsage() {
   console.log(
-    'Usage: npm run dev -- "C:\\path\\to\\your\\project" [--run] [--approve]'
+    'Usage: npm run dev -- "C:\\path\\to\\your\\project" [--run] [--approve]',
   );
   console.log("");
   console.log("Options:");
@@ -97,12 +72,16 @@ if (options.errors.length > 0) {
 } else {
   try {
     const discoveryResult = await discoverPackages(options.targetPath);
+
     const checks = discoverChecks(discoveryResult);
+
     const operationalScripts =
       discoverOperationalScripts(discoveryResult);
 
     const executionResults = [];
     const policyDecisions = [];
+
+    let orchestrationFailed = false;
 
     if (options.run) {
       const runner = createPolicyAwareDockerRunner({
@@ -110,30 +89,19 @@ if (options.errors.length > 0) {
       });
 
       const availableChecks = checks.filter(
-        (check) => check.status === "available"
+        (check) => check.status === "available",
       );
 
-      for (const check of availableChecks) {
-        try {
-          const outcome = await runner.runCheck(check, {
-            approvalGranted: options.approve,
-          });
+      const outcome = await orchestrateChecks({
+        checks: availableChecks,
+        runner,
+        approvalGranted: options.approve,
+      });
 
-          policyDecisions.push({
-            check,
-            decision: outcome.decision,
-          });
+      executionResults.push(...outcome.executionResults);
+      policyDecisions.push(...outcome.policyDecisions);
 
-          if (outcome.result !== null) {
-            executionResults.push(outcome.result);
-          }
-        } catch (error) {
-          // Preserve earlier results if one check fails unexpectedly.
-          executionResults.push(
-            createOrchestrationFailure(check, error)
-          );
-        }
-      }
+      orchestrationFailed = outcome.orchestrationFailed;
     }
 
     const findings = diagnose({
@@ -149,13 +117,18 @@ if (options.errors.length > 0) {
       operationalScripts,
       findings,
       executionResults,
-      policyDecisions
+      policyDecisions,
     );
+
+    if (orchestrationFailed) {
+      process.exitCode = 1;
+    }
   } catch (error) {
     console.error(
       "DeployMate failed:",
-      error instanceof Error ? error.message : error
+      error instanceof Error ? error.message : error,
     );
+
     process.exitCode = 1;
   }
 }

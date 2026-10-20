@@ -1,0 +1,7 @@
+{
+   "name": "deploymate-cli-smoke-test",
+   "version": "1.0.0",
+   "scripts": {
+    "test": "node -e \"console.error('SMOKE_TEST_FAILED'); process.exit(1)\""
+   }
+}

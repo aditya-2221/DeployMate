@@ -74,20 +74,24 @@ export function printReport(
             `  [AVAILABLE] ${check.type}: ${check.script} (${check.command})`
           );
 
-          const matchingResult = executionResults.find(
+                    
+          const matchingResults = executionResults.filter(
             (execution) =>
               execution.component === check.component &&
               execution.type === check.type &&
               execution.script === check.script
           );
 
-          if (matchingResult) {
+          if (matchingResults.length === 1) {
             console.log(
-              `    Execution status: ${matchingResult.status.toUpperCase()}`
+              `    Execution status: ${matchingResults[0].status.toUpperCase()}`
             );
-          } else {
+          } else if (matchingResults.length === 0) {
             console.log("    Execution status: NOT RUN");
+          } else {
+            console.log("    Execution status: AMBIGUOUS");
           }
+
         } 
         else {
           console.log(

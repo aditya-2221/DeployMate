@@ -71,3 +71,72 @@ test("reports when no checks are discovered", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /No checks discovered/);
 });
+
+
+
+test("marks multiple matching execution results as ambiguous", () => {
+  const script = `import { printReport } from ${JSON.stringify(reportUrl.href)};
+
+    printReport(
+      {
+        root: "C:/sample",
+        packageManager: { manager: "npm" },
+        components: [
+          {
+            path: "frontend",
+            type: "frontend",
+            name: "sample-frontend",
+            packageFile: "frontend/package.json",
+            scripts: { build: "vite build" },
+            packageManager: { manager: "npm" }
+          }
+        ],
+        warnings: []
+      },
+      [
+        {
+          component: "frontend",
+          type: "build",
+          status: "available",
+          script: "build",
+          command: "vite build"
+        }
+      ],
+      [],
+      [],
+      [
+        {
+          component: "frontend",
+          type: "build",
+          script: "build",
+          status: "passed",
+          exitCode: 0,
+          durationMs: 100,
+          error: null,
+          stderr: ""
+        },
+        {
+          component: "frontend",
+          type: "build",
+          script: "build",
+          status: "failed",
+          exitCode: 1,
+          durationMs: 100,
+          error: null,
+          stderr: ""
+        }
+      ]
+    );
+  `;
+
+  const result = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", script],
+    { encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Execution status: AMBIGUOUS/);
+  assert.match(result.stdout, /\[PASSED\] frontend \| build \| build/);
+  assert.match(result.stdout, /\[FAILED\] frontend \| build \| build/);
+});

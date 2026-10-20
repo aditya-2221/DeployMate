@@ -449,4 +449,270 @@ test("rejects a source file changed during staging and cleans up", async () => {
     });
   }
 });
+test("attempts both handle closes and cleans up after a close failure", async () => {
+  const sourceRoot = await makeProject();
+  const stagingParent = await fs.mkdtemp(
+    path.join(os.tmpdir(), "deploymate-close-failure-test-"),
+  );
 
+  const sourceFile = path.join(sourceRoot, "package.json");
+  const originalOpen = fs.open;
+
+  let sourceCloseAttempted = false;
+  let destinationCloseFailed = false;
+
+  try {
+    fs.open = async (filePath, ...args) => {
+      const handle = await originalOpen(filePath, ...args);
+      const resolvedPath = path.resolve(String(filePath));
+
+      if (resolvedPath === sourceFile) {
+        return new Proxy(handle, {
+          get(target, property) {
+            if (property === "close") {
+              return async (...closeArgs) => {
+                sourceCloseAttempted = true;
+                return target.close(...closeArgs);
+              };
+            }
+
+            const value = Reflect.get(target, property, target);
+            return typeof value === "function"
+              ? value.bind(target)
+              : value;
+          },
+        });
+      }
+
+      const isStagedFile =
+        path.basename(path.dirname(resolvedPath)).startsWith(
+          "deploymate-workspace-",
+        );
+
+      if (isStagedFile && !destinationCloseFailed) {
+        return new Proxy(handle, {
+          get(target, property) {
+            if (property === "close") {
+              return async (...closeArgs) => {
+                destinationCloseFailed = true;
+
+                // Close the real handle first to avoid leaking a file descriptor.
+                await target.close(...closeArgs);
+
+                // Then simulate the close operation reporting an error.
+                throw new Error("Injected destination close failure");
+              };
+            }
+
+            const value = Reflect.get(target, property, target);
+            return typeof value === "function"
+              ? value.bind(target)
+              : value;
+          },
+        });
+      }
+
+      return handle;
+    };
+
+    await assert.rejects(
+      createStagedWorkspace({
+        projectRoot: sourceRoot,
+        tempDirectory: stagingParent,
+      }),
+      /Injected destination close failure/,
+    );
+
+    assert.equal(destinationCloseFailed, true);
+    assert.equal(
+      sourceCloseAttempted,
+      true,
+      "Source handle should still receive a close attempt.",
+    );
+
+    assert.deepEqual(
+      await fs.readdir(stagingParent),
+      [],
+      "Failed staging should remove its partial workspace.",
+    );
+  } finally {
+    fs.open = originalOpen;
+
+    await fs.rm(stagingParent, {
+      recursive: true,
+      force: true,
+    });
+
+    await fs.rm(sourceRoot, {
+      recursive: true,
+      force: true,
+    });
+  }
+});
+
+
+test("cleans up the staged workspace when writing a file fails", async () => {
+  const sourceRoot = await makeProject();
+
+  const stagingParent = await fs.mkdtemp(
+    path.join(os.tmpdir(), "deploymate-write-failure-test-"),
+  );
+
+  const originalOpen = fs.open;
+  let writeFailureInjected = false;
+
+  try {
+    fs.open = async (filePath, ...args) => {
+      const handle = await originalOpen(filePath, ...args);
+      const resolvedPath = path.resolve(String(filePath));
+      const relativePath = path.relative(stagingParent, resolvedPath);
+
+      const isInsideStagingParent =
+        relativePath !== "" &&
+        relativePath !== ".." &&
+        !relativePath.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relativePath);
+
+      const workspaceName = relativePath.split(path.sep)[0];
+      const isStagedFile =
+        isInsideStagingParent &&
+        workspaceName.startsWith("deploymate-workspace-");
+
+      if (!isStagedFile || writeFailureInjected) {
+        return handle;
+      }
+
+      return new Proxy(handle, {
+        get(target, property) {
+          if (property === "write") {
+            return async () => {
+              writeFailureInjected = true;
+              throw new Error("Injected staged-file write failure");
+            };
+          }
+
+          const value = Reflect.get(target, property, target);
+
+          return typeof value === "function"
+            ? value.bind(target)
+            : value;
+        },
+      });
+    };
+
+    await assert.rejects(
+      createStagedWorkspace({
+        projectRoot: sourceRoot,
+        tempDirectory: stagingParent,
+      }),
+      /Injected staged-file write failure/,
+    );
+
+    assert.equal(
+      writeFailureInjected,
+      true,
+      "The test must actually inject a staged-file write failure.",
+    );
+
+    assert.deepEqual(
+      await fs.readdir(stagingParent),
+      [],
+      "A failed write must not leave a partial workspace behind.",
+    );
+  } finally {
+    fs.open = originalOpen;
+
+    await fs.rm(stagingParent, {
+      recursive: true,
+      force: true,
+    });
+
+    await fs.rm(sourceRoot, {
+      recursive: true,
+      force: true,
+    });
+  }
+});
+
+
+test("reports cleanup failure without losing the staging error", async () => {
+  const sourceRoot = await makeProject();
+
+  const stagingParent = await fs.mkdtemp(
+    path.join(os.tmpdir(), "deploymate-cleanup-error-test-"),
+  );
+
+  const originalRm = fs.rm;
+  let injectedCleanupFailure = false;
+
+  try {
+    fs.rm = async (targetPath, ...args) => {
+      const resolvedPath = path.resolve(String(targetPath));
+      const relativePath = path.relative(stagingParent, resolvedPath);
+
+      const isDirectChild =
+        relativePath !== "" &&
+        !relativePath.includes(path.sep) &&
+        relativePath !== ".." &&
+        !path.isAbsolute(relativePath);
+
+      if (
+        isDirectChild &&
+        relativePath.startsWith("deploymate-workspace-")
+      ) {
+        injectedCleanupFailure = true;
+        throw new Error("Injected workspace cleanup failure");
+      }
+
+      return originalRm(targetPath, ...args);
+    };
+
+    let caughtError;
+
+    try {
+      await createStagedWorkspace({
+        projectRoot: sourceRoot,
+        maxFiles: 1,
+        tempDirectory: stagingParent,
+      });
+    } catch (error) {
+      caughtError = error;
+    }
+
+    assert.ok(caughtError, "Staging should fail.");
+    assert.equal(injectedCleanupFailure, true);
+
+    assert.match(caughtError.message, /file limit/i);
+    assert.match(caughtError.message, /cleanup also failed/i);
+
+    assert.ok(
+      caughtError.cause,
+      "The original staging error should be retained as cause.",
+    );
+
+    assert.match(caughtError.cause.message, /file limit/i);
+
+    assert.ok(
+      caughtError.errors?.[1],
+      "The cleanup error should be exposed in the aggregate.",
+    );
+
+    assert.match(
+      caughtError.errors[1].message,
+      /Injected workspace cleanup failure/,
+    );
+  } finally {
+    // Restore the real function before removing test artifacts.
+    fs.rm = originalRm;
+
+    await fs.rm(stagingParent, {
+      recursive: true,
+      force: true,
+    });
+
+    await fs.rm(sourceRoot, {
+      recursive: true,
+      force: true,
+    });
+  }
+});

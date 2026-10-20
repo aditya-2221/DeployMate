@@ -138,6 +138,7 @@ export async function createStagedWorkspace({
 
       let sourceHandle;
       let destinationHandle;
+      let operationError;
 
       try {
         // O_NOFOLLOW prevents opening a final-component symlink
@@ -261,9 +262,32 @@ export async function createStagedWorkspace({
         totalBytes += copiedBytes;
 
 
-      } finally {
-        await destinationHandle?.close();
-        await sourceHandle?.close();
+      } 
+
+      catch (error) {
+        operationError = error;
+        throw error;
+
+      } 
+      finally {
+        let closeError;
+
+        try {
+          await destinationHandle?.close();
+        } catch (error) {
+          closeError = error;
+        }
+
+        try {
+          await sourceHandle?.close();
+        } catch (error) {
+          closeError ??= error;
+        }
+
+        // Preserve the original operation error if copying already failed.
+        if (closeError && !operationError) {
+          throw closeError;
+        }
       }
     }
   }
@@ -287,13 +311,27 @@ export async function createStagedWorkspace({
         });
       },
     };
-  } catch (error) {
-    // Best-effort cleanup if staging fails partway through.
-    await fs.rm(temporaryRoot, {
-      recursive: true,
-      force: true,
-    }).catch(() => {});
+  
+    } 
+    catch (error) {
+      // Attempt cleanup after a partial staging failure.
+      try {
+        await fs.rm(temporaryRoot, {
+          recursive: true,
+          force: true,
+        });
+      } catch (cleanupError) {
+        // Preserve the original staging error while exposing
+        // the cleanup failure as additional structured information.
+        throw new AggregateError(
+          [error, cleanupError],
+          `Workspace staging failed: ${error.message}. ` +
+            `Workspace cleanup also failed: ${cleanupError.message}`,
+          { cause: error },
+        );
+      }
 
-    throw error;
-  }
+      throw error;
+    }
+
 }
