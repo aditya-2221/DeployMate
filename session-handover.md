@@ -1,6 +1,45 @@
-# DeployMate Session Handover — 19 October 2026
+# DeployMate Session Handover
 
-## Current state
+## Current checkpoint — 21 October 2026
+
+- Repository: C:\DeployMate
+- Agent package: C:\DeployMate\agent
+- The developer confirmed the Git merge/push synchronization was completed. The inspected pre-documentation main head was b20bd1b (merged branch), containing local commit 2bf9080 and the four previously remote documentation commits.
+- The latest developer-shared full suite reported 159 passed, 0 failed before the merge/push. A post-merge full-suite rerun has not been shown; run it before treating the merged code as freshly verified.
+- A disposable project passed through the real Docker-backed execution path: policy APPROVED, check passed, exit code 0.
+- A deliberately failing Docker-backed test correctly returned a failed result (exit code 1), CHECK_FAILED, captured stderr, and a diagnostic error—but the CLI process returned exit code 0. This is the next implementation task.
+- Foundational deterministic diagnostics are implemented. Advanced parsing of arbitrary tool output, AI planning, repair/verification, UI, and deployment integration remain planned.
+- Dependency installation is not a working end-to-end workflow; it fails closed when restricted network enforcement is not configured.
+- Docker is a risk-reduction layer, not a complete security guarantee.
+
+### First task next session: CLI exit-code contract
+
+1. Run npm test from C:\DeployMate\agent against the synchronized tree and capture exact output.
+2. Inspect agent/src/index.js, agent/test/cli.test.js, agent/src/execution/orchestrateChecks.js, and the result/policy status contracts.
+3. Add regression tests for successful and failed requested execution, preserving discovery-only success.
+4. Add coverage for timeout and missing-approval/policy-block behavior.
+5. Make the smallest safe fix so unsuccessful requested execution returns non-zero without conflating policy denial with internal orchestration failure.
+6. Run focused CLI tests and the full suite; record exact outcomes and evidence provenance.
+
+### Acceptance criteria
+
+- A passing approved check returns CLI exit code 0.
+- A failed approved check returns non-zero and retains CHECK_FAILED evidence.
+- A timed-out requested check returns non-zero and retains timeout status/evidence.
+- A requested check blocked for missing approval returns non-zero and retains its policy finding.
+- Discovery-only mode remains zero on successful discovery/reporting.
+- Invalid arguments, fatal errors, and orchestration failures remain non-zero.
+- Focused CLI tests and full suite pass.
+
+### Additional follow-up
+
+- Continue the staging/Docker/security audit after the CLI contract is corrected.
+- Test a representative real project through the Docker path after the regression tests are in place.
+- Review whether root fixtures cli-smoke-test/, docker-smoke-test/, and test-malformed/ and zero-byte files agent/agent@1.0.0, agent/cd, agent/git, agent/node, and agent/npm are intentional. Their purpose is not confirmed; do not remove them without review.
+- At the final documentation checkpoint, keep the learning journal, testing log, architecture, roadmap, security notes, and handover consistent.
+
+
+## Historical handover — 19 October 2026
 
 - Repository: `C:\DeployMate`
 - Agent package: `C:\DeployMate\agent`
@@ -71,7 +110,7 @@ Review the cleanup/error-handling path in `agent/src/execution/dockerPolicyRunne
 
 ---
 
-## Latest handover — 20 October 2026
+## Historical handover — 20 October 2026
 
 ### Current checkpoint
 

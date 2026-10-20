@@ -1,6 +1,6 @@
 # DeployMate Learning Journal — Technical Revision Handbook
 
-**Last updated:** 19 October 2026  
+**Last updated:** 21 October 2026  
 **Repository:** `C:\DeployMate`  
 **Agent package:** `C:\DeployMate\agent`
 
@@ -667,3 +667,197 @@ DeployMate discovers project components and scripts without executing them. When
 
 Every session entry should capture what was asked and why, starting state, exact files/modules, code flow, changed versus proposed work, design trade-offs, questions and answers, errors/root causes/fixes, commands and test evidence with provenance, interview revision notes, uncertainties, and acceptance criteria. Preserve previous entries; do not invent code changes, questions, or test results.
 
+
+
+# Learning Journal Entry — 21 October 2026
+## Real Docker smoke tests, CLI exit-code defect, Git history recovery, and documentation maintenance
+
+### 1. What I asked for and why
+
+This session began after the developer wanted to stop for the day and asked what remained before “actual code execution.” The key clarification was that actual Docker execution had already occurred: the disposable smoke project had run inside the Docker-backed runner. The remaining work is to validate a broader set of outcomes and make the CLI report those outcomes correctly.
+
+The developer then decided to commit and push the current code/tests. The push to origin/main was rejected because GitHub had four commits that the local branch did not contain. The developer asked for help recovering safely, then confirmed that the merge and push were completed. Before ending the session, the developer asked for all project documentation to be updated, explicitly requiring that the learning-journal editing rules be read first and that the new entry satisfy those rules.
+
+### 2. Starting state and evidence sources
+
+The current GitHub main branch was inspected before this documentation update. Its code includes:
+- agent/src/index.js — CLI argument parsing, discovery, optional execution, diagnostics, report generation, and process exit-code handling.
+- agent/src/execution/dockerPolicyRunner.js — policy-aware staging/execution/cleanup orchestration.
+- agent/src/execution/dockerProcess.js — Docker process invocation, timeout/output/resource handling.
+- agent/src/diagnostics/diagnose.js — deterministic diagnostic finding generation.
+- agent/test/cli.test.js — four CLI regression tests.
+- The broader agent/test suite covering discovery, policy, Docker process behavior, result contracts, diagnostics, staging, and orchestration.
+
+The current learning-journal.md rules require a cumulative technical revision record. Each entry must preserve the user's actual questions, starting state, exact modules, code flow, design choices and trade-offs, errors and fixes, test evidence with provenance, interview questions/answers, limitations, and next steps. Older entries must remain intact. Missing details must be called out instead of invented.
+
+### 3. First approved end-to-end smoke test: passing check
+
+The developer ran this command from Windows Command Prompt:
+
+~~~cmd
+npm run dev -- "C:\DeployMate\cli-smoke-test" --run --approve
+echo EXIT_CODE=%ERRORLEVEL%
+~~~
+
+Reported result:
+- Project discovered at C:\DeployMate\cli-smoke-test.
+- Root lockfile recognized as package-lock.json; package manager resolved to npm for the project.
+- The package declared a test script: node -e "console.log('SMOKE_TEST_PASSED')".
+- Policy decision: [ALLOWED], code APPROVED, because explicit approval was provided.
+- Execution result: [PASSED], exit code 0, duration 4,568 ms.
+- Unavailable lint/build/typecheck scripts were reported as informational CHECK_UNAVAILABLE findings, not failures.
+- CLI process exit code was 0.
+
+**What this proves:** the exercised path from discovery through approval, Docker-backed execution, result normalization, diagnostics, and terminal reporting worked for this simple passing test in the developer's environment.
+
+**What it does not prove:** that all project types work, that the container is an absolute security boundary, or that all cleanup/error paths are correct.
+
+### 4. Deliberately failing smoke test and confirmed bug
+
+The developer changed the disposable project's test script to print SMOKE_TEST_FAILED to stderr and exit with code 1, then reran the same approved execution command.
+
+Reported result:
+- The runner returned [FAILED].
+- Exit code: 1.
+- Duration: 910 ms.
+- Error code: CHECK_FAILED.
+- Error message: Docker check exited with code 1.
+- Stderr contained SMOKE_TEST_FAILED.
+- Diagnostics produced one ERROR finding with code CHECK_FAILED and evidence containing the failed status and exit code.
+- The CLI process returned EXIT_CODE=0 anyway.
+
+This is the key defect identified in this session. The Docker runner, result adapter, and diagnostics represented the failure correctly; the top-level CLI did not propagate the failed requested check into its process exit status.
+
+### 5. How the current CLI works
+
+File: agent/src/index.js.
+
+1. parseArguments() accepts the target path and flags --run and --approve; unknown options and --approve without --run are rejected.
+2. discoverPackages() inspects the target project.
+3. discoverChecks() and discoverOperationalScripts() inventory declared scripts.
+4. When --run is supplied, the CLI creates a policy-aware Docker runner, filters to checks with status available, and calls orchestrateChecks().
+5. It collects execution results and policy decisions.
+6. diagnose() derives structured findings from discovery, execution results, and policy decisions.
+7. printReport() renders the terminal report.
+8. Current exit handling sets process.exitCode = 1 for orchestrationFailed and for fatal exceptions/invalid arguments, but does not consistently set a non-zero exit code when an individual requested check fails or is blocked by policy.
+
+### 6. Why the exit-code defect matters
+
+A human sees the FAILED report, but CI/CD systems, scripts, and other automation often use the process exit code to decide whether a command succeeded. If DeployMate prints an error and exits with code 0, an automated pipeline may treat a failed validation as successful. The process status is part of the product's output contract, not a cosmetic detail.
+
+Target contract:
+- Discovery-only invocation returns 0 when discovery and report generation succeed, even if optional check types are unavailable.
+- Requested execution returns 0 only when the requested checks complete successfully.
+- A requested check that fails, times out, is blocked for missing approval, or otherwise cannot complete successfully should return non-zero.
+- Invalid arguments, fatal errors, and orchestration failures return non-zero.
+- Ordinary policy denial must remain distinguishable from an internal orchestration failure in structured results, even though both can require a non-zero process exit code for an invocation that requested execution.
+
+The next change should be test-first. Add CLI tests for a successful requested check and a failing requested check, then cover timeout and policy-block behavior as appropriate. Preserve the existing discovery-only success test. Make the smallest change in index.js that derives the final exit status from the requested execution's results/decisions without conflating a normal discovery-only run with failed execution.
+
+### 7. Existing CLI regression tests
+
+File: agent/test/cli.test.js.
+
+The four tests in the current repository cover:
+1. Missing project path returns non-zero.
+2. --approve without --run is rejected.
+3. Unknown CLI options are rejected.
+4. Discovery-only mode reports checks as not run and returns zero.
+
+The file creates a temporary project with a package.json and package-lock.json, and removes the fixture in a finally block. The current tests do not cover the CLI process exit status for an actual failed requested check; that gap allowed the observed defect to remain.
+
+### 8. Full-suite and timeout evidence
+
+The developer supplied the output of a full npm test run from C:\DeployMate\agent:
+- Tests: 159
+- Passed: 159
+- Failed: 0
+- Cancelled: 0
+- Skipped: 0
+- Todo: 0
+- Total duration: 17,166.1084 ms (about 17.17 seconds)
+
+The output includes the Docker timeout smoke test. That test deliberately runs a process that keeps printing once per second and uses a 5,000 ms timeout. Its reported result was:
+- status: timed_out
+- exitCode: null
+- signal: SIGTERM
+- error.code: CHECK_TIMEOUT
+- error.message: Check exceeded 5000 ms.
+- durationMs: 5520
+- cleanup success: true
+- processDidNotClose: false
+- all timeout assertions true
+- final smoke-test message: PASS: Docker timeout handling behaved as expected.
+
+The test file itself was reported at about 15.39 seconds in the test runner output, and the complete suite at about 17.17 seconds. The timeout is expected behavior for this test and is not a failing test.
+
+**Evidence provenance:** these are developer-shared terminal output (also preserved in the attached test log), not a test run independently performed during this documentation update. The full suite was reported before the Git merge/push. A post-merge full-suite rerun was not shown in the conversation, so rerun npm test against the synchronized tree before claiming the merged checkpoint was freshly verified.
+
+### 9. Git push rejection and safe history recovery
+
+The developer ran git push origin main and Git rejected the push with [rejected] main -> main (fetch first). The initial git status showed a clean working tree and one local commit ahead of the then-known origin/main. After git fetch origin, Git reported local main ahead by one and behind by four commits.
+
+The commit graph showed:
+- Local code/test commit: 2bf9080 test: harden execution diagnostics and CLI coverage.
+- Remote documentation commits: 084fc67, 40abdf3, 87b8c63, and f89625d.
+- Common ancestor: dfb8f67.
+- Merge commit: 520ba29 Merge remote-tracking branch 'origin/main'.
+- Latest local merge follow-up commit: b20bd1b merged branch.
+
+A backup branch was created as backup/main-before-sync. During the merge, Vim reported E211: File ".git/MERGE_MSG" no longer available. The subsequent status showed a clean working tree and three local commits ahead. The later graph confirmed the merge commit and all four remote documentation commits were present alongside the local code commit.
+
+The developer then confirmed that the final synchronization/push steps were completed. No force-push or destructive reset was used. The repository's main branch is now the base for this documentation update; the documentation commit itself will advance that branch.
+
+**Learning:** when Git rejects a push because remote work exists, fetch first, inspect both sides' commit lists and graph, preserve a backup, and merge/rebase only after understanding the divergence. Do not force-push or discard unknown remote work just to make a push succeed. A Vim editor error should be followed by checking Git's actual status and graph rather than assuming the merge was aborted or complete.
+
+### 10. Repository hygiene observation
+
+The inspected GitHub tree contains:
+- root fixture directories cli-smoke-test/, docker-smoke-test/, and test-malformed/;
+- agent/docker-smoke-test.mjs;
+- zero-byte files under agent/ named agent@1.0.0, cd, git, node, and npm.
+
+Their intended purpose is not established by the current evidence. Do not silently delete them as part of documentation work. Ask the developer to confirm whether these are intentional fixtures or accidental artifacts, then remove or relocate them in a separately reviewed code/repository-hygiene change if appropriate.
+
+### 11. What I learned / interview revision
+
+**Q: Why is an execution result not enough; why must the CLI exit code match it?**  
+A: Humans inspect the report, but automation commonly consumes the process exit status. The CLI is an integration boundary, so it must translate structured results into an accurate process status.
+
+**Q: Which layer was correct in the failing smoke test?**  
+A: The Docker runner returned failure with exit code 1; the result/reporting layers preserved CHECK_FAILED and stderr. The bug is in top-level CLI exit handling.
+
+**Q: Why should discovery-only mode still return 0 when lint/build/typecheck are unavailable?**  
+A: Discovery-only mode answers what is declared, not whether every possible check exists. Missing optional scripts are informational unless the user requested a policy that makes them mandatory.
+
+**Q: What does the Docker timeout smoke test prove?**  
+A: In the exercised environment, the configured timeout was detected, a termination signal was observed, the structured result remained timed_out with no invented exit code, and cleanup/process closure assertions passed. It does not prove every process/daemon/cleanup failure path is safe.
+
+**Q: Why not force-push after the rejection?**  
+A: The remote contained four legitimate commits not in the local history. A force-push could discard them. Fetching, inspecting the graph, and merging preserved both the local code/test commit and remote documentation history.
+
+**Q: What is the current architectural sequence?**  
+A: Discovery → policy decision → validation → filtered staging → Docker execution → cleanup → result normalization → deterministic diagnostics → report. AI analysis, planning, approved repairs, verification, UI, and deployment remain future capabilities.
+
+### 12. Current limitations and next steps
+
+- Fix CLI exit-code propagation for failed, timed-out, blocked, and otherwise unsuccessful requested checks.
+- Add regression tests for successful and unsuccessful --run invocations while preserving discovery-only behavior.
+- Rerun the full suite after the Git merge/push and after the CLI fix.
+- Continue security review of staging permissions, partial-copy cleanup, secret filtering, actual Docker flags, output truncation/redaction, and daemon/timeout failure combinations.
+- Run a representative project through the real Docker path after CLI exit semantics are fixed.
+- Review the tracked fixture directories and zero-byte files before deciding whether they belong in the repository.
+- Dependency installation remains fail-closed when restricted network enforcement is unavailable; successful installation has not been demonstrated.
+- AI planning, approval-based repairs, UI, and deployment integration remain planned.
+
+### 13. Acceptance criteria for the next implementation task
+
+The CLI exit-code fix is ready when:
+1. A passing approved check yields exit code 0.
+2. A deliberately failing approved check yields non-zero and retains its CHECK_FAILED diagnostic.
+3. A timed-out requested check yields non-zero and retains timed_out/timeout evidence.
+4. A requested check blocked for missing approval yields non-zero and retains a policy/approval finding.
+5. Discovery-only mode still returns 0 when discovery/reporting succeeds.
+6. Invalid arguments and orchestration failures remain non-zero.
+7. Focused CLI tests and the full suite pass.
+8. The testing log records exact output and its provenance.

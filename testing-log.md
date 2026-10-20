@@ -1,7 +1,7 @@
 # DeployMate Testing Log
 
-**Last updated:** 19 October 2026  
-**Latest developer-shared full-suite result:** 113 passed, 0 failed.
+**Last updated:** 21 October 2026  
+**Latest developer-shared full-suite result:** 159 passed, 0 failed (run before the latest Git merge/push; rerun after synchronization).
 
 ## Recording rules
 
@@ -87,7 +87,6 @@ Passing tests do not establish arbitrary repository compatibility, complete sand
 
 ## Outstanding test/review queue
 
-1. Add a regression test where result adaptation throws after cleanup has already been attempted; assert cleanup is attempted at most once.
 2. Test malformed raw result objects and truthful normalization.
 3. Test partial workspace-copy failures and cleanup.
 4. Review sensitive-file exclusions, symlinks, special entries, file-count and byte limits.
@@ -132,3 +131,79 @@ These results do **not** demonstrate successful dependency installation. The cur
 
 Also, a passing suite does not prove complete Docker isolation, comprehensive secret detection, end-to-end pnpm/Yarn support, or production readiness.
 
+
+
+---
+
+## Session update — 21 October 2026
+
+### Full suite — developer-shared output
+
+Command: npm test  
+Working directory: C:\DeployMate\agent
+
+| Metric | Result |
+|---|---:|
+| Tests | 159 |
+| Passed | 159 |
+| Failed | 0 |
+| Cancelled | 0 |
+| Skipped | 0 |
+| Todo | 0 |
+| Duration | 17,166.1084 ms (~17.17 s) |
+
+**Evidence provenance:** output shared by the developer. The run occurred before the merge/push that synchronized local and remote history; do not treat it as a fresh post-merge run. Run npm test again from C:\DeployMate\agent next session.
+
+The output included a Docker timeout smoke test with a 5,000 ms timeout. It returned timed_out, exitCode null, signal SIGTERM, CHECK_TIMEOUT, cleanup success, and processDidNotClose false; timeout assertions passed.
+
+### Manual Docker-backed passing check
+
+Command:
+
+~~~cmd
+npm run dev -- "C:\DeployMate\cli-smoke-test" --run --approve
+echo EXIT_CODE=%ERRORLEVEL%
+~~~
+
+Developer-shared output:
+- Policy: APPROVED.
+- Check: PASSED, exit code 0, duration 4,568 ms.
+- CLI exit code: 0.
+- Missing lint/build/typecheck scripts were informational CHECK_UNAVAILABLE findings.
+
+### Manual Docker-backed failing check
+
+The test script was changed to print SMOKE_TEST_FAILED to stderr and exit with code 1, then the same command was rerun.
+
+Developer-shared output:
+- Check: FAILED, exit code 1, duration 910 ms.
+- Error: CHECK_FAILED; stderr captured SMOKE_TEST_FAILED.
+- Diagnostics: one ERROR finding, code CHECK_FAILED, with evidence for status failed and exit code 1.
+- CLI process exit code: 0.
+
+**Conclusion:** Docker execution, result normalization, stderr capture, and deterministic diagnostics worked in this test. The top-level CLI exit status is incorrect for a failed requested check. Add regression tests and fix this before CI/CD use.
+
+### CLI test coverage present in the repository
+
+agent/test/cli.test.js currently covers:
+1. Missing path returns non-zero.
+2. --approve without --run is rejected.
+3. Unknown options are rejected.
+4. Discovery-only mode reports checks as not run.
+
+Missing cases include an actual successful requested execution, an actual failed requested execution, timeout exit behavior, and missing-approval/policy-block exit behavior. Add targeted tests for these contracts; keep discovery-only success intact.
+
+### Updated current test queue
+
+1. Fix CLI exit-code propagation and add the missing regression tests.
+2. Rerun focused CLI tests and npm test after the latest merge/push.
+3. Test malformed raw results and confirm truthful normalization.
+4. Test partial workspace-copy failure and cleanup.
+5. Review sensitive-file exclusions, symlinks, special entries, file-count and byte limits.
+6. Test Docker spawn/daemon/timeout/cleanup error combinations.
+7. Verify blocked policy never invokes staging or Docker.
+8. Verify resource limits in the actual Docker invocation.
+9. Review output truncation and secret redaction.
+10. Review the tracked fixture directories and zero-byte files listed in the session handover; confirm intent before cleanup.
+
+A passing suite is evidence for exercised scenarios, not proof of production readiness or complete sandbox security.

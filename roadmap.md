@@ -1,6 +1,6 @@
 # DeployMate — Product Roadmap
 
-**Last updated:** 19 October 2026
+**Last updated:** 21 October 2026
 
 DeployMate's goal is an evidence-driven release-readiness workflow: **Inspect → Execute checks safely → Diagnose → Plan → Request approval → Repair → Verify → Document/deploy/handover**. Deterministic tools collect evidence; AI reasons over evidence; consequential actions remain under user control.
 
@@ -30,7 +30,7 @@ Implemented modules:
 - Docker process execution with timeout, bounded output, and resource restrictions.
 - Raw-result adapter and policy-aware orchestration.
 
-**Latest evidence shared on 19 October 2026:** 13/13 focused integration tests and 113/113 full-suite tests passed. The timeout smoke test also passed after intentionally timing out and confirming cleanup/process closure.
+**Latest full-suite evidence shared by the developer:** 159/159 tests passed before the latest Git merge/push. The suite included CLI argument/discovery tests, diagnostic validation cases, Docker execution/cleanup tests, and an intentional timeout smoke test. A post-merge rerun remains outstanding.
 
 **Remaining work before this phase is considered mature:**
 - Review cleanup/error handling if result adaptation throws after cleanup has already been attempted.
@@ -38,7 +38,7 @@ Implemented modules:
 - Review staging permissions, partial-copy failure cleanup, sensitive-file exclusions, and cleanup telemetry.
 - Verify the actual Docker invocation enforces the intended restrictions.
 
-## Phase 2: Deterministic Diagnostics — Planned
+## Phase 2: Deterministic Diagnostics — Partially Implemented; Expansion Planned
 
 - Parse lint/build/test/type-check output.
 - Identify common configuration and dependency issues.
@@ -47,6 +47,10 @@ Implemented modules:
 - Classify findings by severity/category.
 - Separate confirmed failures from warnings and uncertain diagnoses.
 - Produce a prioritized issue list.
+
+**Implemented foundation:** agent/src/diagnostics/diagnose.js generates structured findings for discovery warnings, unavailable checks, policy/approval decisions, malformed evidence, execution-result inconsistencies, conflicting results, and failed/timed-out checks. The CLI invokes diagnostics after discovery and any requested execution; tests cover these deterministic cases.
+
+**Still planned:** richer parsing of arbitrary lint/build/test/type-check output, deeper error grouping/root-cause analysis, and broader source-location extraction. Do not mark the entire phase complete just because the foundational diagnostic engine exists.
 
 **Deliverable:** A structured diagnostic report with evidence for each finding.
 
@@ -128,3 +132,20 @@ The architecture must provide a safe way for a UI to access local repositories; 
 8. Continuous reliability/security hardening.
 
 **Core principle:** build a trustworthy execution/evidence layer before relying on AI to diagnose or repair code. Passing tests are necessary evidence, not proof of production readiness.
+
+
+## Current cross-phase blocker — CLI exit status
+
+A successful approved Docker smoke test returned exit code 0. A deliberately failing smoke test was correctly reported as FAILED with exit code 1 and CHECK_FAILED, but the DeployMate CLI process also returned exit code 0. This is a confirmed integration defect in agent/src/index.js.
+
+Before relying on DeployMate from CI/CD or treating the execution milestone as mature:
+1. Add CLI regression tests for successful and failed requested execution.
+2. Make failed, timed-out, policy-blocked, and otherwise unsuccessful requested execution return non-zero.
+3. Preserve successful discovery-only behavior.
+4. Test timeout and missing-approval behavior.
+5. Run the focused CLI tests and full suite.
+6. Re-run the full suite after the latest merge/push.
+
+## Repository hygiene follow-up
+
+The inspected GitHub tree contains cli-smoke-test/, docker-smoke-test/, and test-malformed/ fixture directories, plus zero-byte files agent/agent@1.0.0, agent/cd, agent/git, agent/node, and agent/npm. Their intent is unconfirmed; review before removing them. Do not combine unreviewed cleanup with the CLI behavior fix.

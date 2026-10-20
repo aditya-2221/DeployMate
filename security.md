@@ -1,6 +1,6 @@
 # DeployMate Security Notes
 
-**Last updated:** 20 October 2026  
+**Last updated:** 21 October 2026  
 **Security milestone:** Policy-aware Docker execution is implemented; edge-case and production security review continue.
 
 ## Threat model
@@ -42,17 +42,29 @@ These settings reduce risk but do not create an absolute security boundary. Veri
 
 The shared result schema distinguishes `not_run`, `passed`, `failed`, `timed_out`, `blocked`, and `skipped`. Passed requires exit code zero; failed requires a non-null non-zero exit code. Infrastructure failures should not be assigned fabricated exit codes. Cleanup failures must not be reported as clean success.
 
-## Latest test evidence
+## Latest test and execution evidence — 21 October 2026
 
-On 20 October 2026, the developer shared output showing 136/136 full-suite tests passing (0 failures; approximately 15 seconds). The reported suite includes cases verifying that dependency installation is denied when network access is disabled, fails closed when a restricted network is not configured, and is not implicitly requested by ordinary checks. It also includes a test that adapter failure does not trigger a second workspace cleanup.
+The developer shared a full npm test result with 159 tests, 159 passed, 0 failed, and no cancelled/skipped/todo tests; total duration was 17,166.1084 ms. This run occurred before the latest Git merge/push. It has not been independently rerun during this documentation update, so the synchronized tree still needs a fresh full-suite run.
 
-A Docker timeout smoke test intentionally reaches a 5,000 ms timeout and reports `status: timed_out`, `exitCode: null`, `signal: SIGTERM`, `CHECK_TIMEOUT`, and successful cleanup/process closure.
+A real Docker-backed smoke test against a disposable Node project passed:
+- Explicit --run --approve invocation.
+- Policy returned APPROVED.
+- Check result was passed, exit code 0, duration 4,568 ms.
+- CLI exit code was 0.
 
-**Evidence provenance:** these are results shared by the developer, not independently executed during this documentation update. Passing tests cover their tested scenarios only; they do not prove complete isolation, comprehensive secret protection, successful dependency installation, or production readiness.
+A deliberately failing Docker-backed smoke test also behaved correctly at the runner/report level:
+- Check result failed, exit code 1.
+- Error code CHECK_FAILED; stderr included SMOKE_TEST_FAILED.
+- Diagnostics emitted an error finding with matching evidence.
+- The CLI process still returned exit code 0. This is a confirmed CLI integration defect. It can cause automation to misinterpret failed validation as success and must be fixed before CI/CD use.
+
+The timeout smoke test in the full-suite output deliberately reached 5,000 ms and reported status timed_out, exitCode null, signal SIGTERM, CHECK_TIMEOUT, cleanup success, and process closure. Its timeout is the expected scenario, not a failing test.
+
+**Evidence provenance:** the full-suite and manual smoke-test results were shared by the developer. They were not independently executed during this documentation update. Passing tests establish only the tested behavior; they do not prove complete isolation, comprehensive secret protection, successful dependency installation, or production readiness.
 
 ## Cleanup review status
 
-The previously noted adapter-exception/double-cleanup concern now has a regression test in the developer-reported suite, which passes. Keep this as a tested edge case, not a claim that all cleanup failure modes are eliminated. Continue testing staging-copy failure, Docker daemon failure, timeout, cancellation, and cleanup errors separately.
+The previously noted adapter-exception/double-cleanup concern now has regression coverage in the developer-reported suite. The test named “adapter failure does not trigger a second workspace cleanup” passed in the 159-test run. Keep this as a tested edge case, not a claim that all cleanup failure modes are eliminated. Continue testing staging-copy failure, Docker daemon failure, timeout, cancellation, and cleanup errors separately.
 
 ## Production-use requirements
 
@@ -71,7 +83,6 @@ The previously noted adapter-exception/double-cleanup concern now has a regressi
 
 ## Immediate security review queue
 
-- Add a regression test for result-adaptation failure after cleanup.
 - Review staging permissions and partial-copy cleanup.
 - Review sensitive-file exclusions and log redaction.
 - Verify actual Docker restrictions and resource limits.
@@ -110,3 +121,12 @@ Installation-specific preconditions must not be inserted into shared Docker proc
 ### Security claims and limits
 
 The reported 136/136 suite result is evidence for the tested behaviors, not proof of production readiness. Continue to treat repository scripts and dependencies as untrusted, and retain the distinction between policy authorization and OS/container isolation. Keep the original repository unmounted, minimize environment variables and host credentials, and treat secret filename filtering as incomplete.
+
+
+## CLI correctness risk
+
+The current CLI can print a CHECK_FAILED error and still exit with code 0. This is not a container escape, but it is a release-safety and automation-integrity risk: CI/CD may treat a failed check as successful. Fix and test the exit-code contract before integrating DeployMate into automated release gates. A requested check that fails, times out, or is blocked for missing approval should return non-zero; discovery-only success should remain zero.
+
+## Repository hygiene observation
+
+The current GitHub tree includes root-level cli-smoke-test/, docker-smoke-test/, and test-malformed/ fixtures, plus zero-byte files agent/agent@1.0.0, agent/cd, agent/git, agent/node, and agent/npm. Their intent has not been confirmed. Review whether these are intentional test assets or accidental artifacts before deleting or retaining them; no repository cleanup was performed as part of this documentation update.

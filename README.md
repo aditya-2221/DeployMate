@@ -6,11 +6,14 @@ DeployMate is an evidence-driven software lifecycle and release-readiness agent.
 
 Deterministic tools collect evidence; AI reasons over that evidence; consequential modifications and deployments should require explicit user approval.
 
-## Current status — 19 October 2026
+## Current status — 21 October 2026
 
-- **Implemented:** repository/package discovery, workspace and package-manager detection, check inventory, operational-script inventory, terminal reporting, execution-result schema, execution policy, Docker check validation/process execution, disposable workspace staging, result normalization, and policy-aware orchestration.
-- **Test evidence:** the developer shared local terminal output showing 13/13 focused integration tests and 113/113 full-suite tests passing. The Docker timeout smoke test also passed after intentionally timing out and verifying cleanup/process closure.
-- **Open work:** cleanup/error-handling edge-case review, further security validation, deterministic diagnostics, AI analysis/planning, approval-based repair/verification, UI, and deployment integration.
+- **Implemented:** repository/package/workspace discovery, package-manager and lockfile detection, check and operational-script inventory, terminal reporting, shared execution-result schema, policy decisions, check validation, disposable workspace staging, Docker process execution, result normalization, policy-aware orchestration, and foundational deterministic diagnostics.
+- **Execution evidence:** the developer shared a full-suite run with **159 tests passed, 0 failed** before the latest Git merge/push. The run included a Docker timeout smoke test. The suite has not been independently rerun during this documentation update, and a post-merge rerun remains a next-session task.
+- **End-to-end smoke tests:** a disposable Node project passed through the approved Docker path. A deliberately failing test was correctly reported as FAILED with exit code 1 and a CHECK_FAILED diagnostic.
+- **Known CLI issue:** both the successful and deliberately failing smoke-test invocations returned process exit code 0. agent/src/index.js currently sets a non-zero exit code for orchestration/fatal errors but does not consistently propagate unsuccessful requested check outcomes. Fix this before relying on DeployMate in CI/CD.
+- **Security boundary:** dependency installation is not a working end-to-end capability; it fails closed without a configured restricted-network mechanism. Docker controls reduce risk but do not prove complete isolation.
+- **Open work:** fix and test CLI exit codes; rerun the full suite after the merge; finish staging/Docker/output/security edge-case review; then test a representative project. AI planning, approval-based repairs, UI, and deployment integrations remain future capabilities.
 - Passing tests do not establish production readiness or complete sandbox security.
 
 ## Documentation

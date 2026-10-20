@@ -1,7 +1,7 @@
 # DeployMate Architecture
 
-**Last updated:** 19 October 2026  
-**Current milestone:** Policy-aware execution and isolation; edge-case and security review remain in progress.
+**Last updated:** 21 October 2026  
+**Current milestone:** Policy-aware Docker execution and foundational deterministic diagnostics are implemented; CLI exit-code correctness and further execution/security validation remain open.
 
 ## Product direction
 
@@ -20,7 +20,8 @@ Deterministic tools collect evidence; AI reasons from that evidence; the user re
 5. **Execution:** run the selected supported check in a constrained Docker container.
 6. **Normalization:** convert raw process outcomes into a validated shared result contract.
 7. **Reporting:** present discovered capabilities separately from execution evidence.
-8. **Future phases:** diagnostics, AI planning, approval-based repairs, verification, UI, documentation, and deployment.
+8. **Deterministic diagnostics:** agent/src/diagnostics/diagnose.js turns discovery warnings, unavailable checks, policy decisions, malformed/conflicting evidence, and execution outcomes into structured findings.
+9. **Future phases:** advanced output parsing, AI planning, approval-based repairs, verification, UI, and deployment.
 
 ## Discovery/reporting flow
 
@@ -91,3 +92,37 @@ Review the error path in `dockerPolicyRunner.js`: if result adaptation throws af
 ## Roadmap boundary
 
 Discovery and script inventory are complete. Policy-aware Docker execution and staging are implemented and covered by the reported tests, but security and edge-case review continue. Deterministic diagnostics, AI planning, approval-based repairs/verification, UI, and deployment remain future phases.
+
+
+## Verified end-to-end behavior — 21 October 2026
+
+The developer ran the CLI against a disposable project with a recognized npm lockfile and a simple test script.
+
+**Approved passing check**
+- Invoked with: npm run dev -- "C:\DeployMate\cli-smoke-test" --run --approve.
+- Policy decision: APPROVED because explicit approval was provided.
+- Execution result: passed, exit code 0, reported duration 4,568 ms.
+- The report displayed unavailable lint/build/typecheck scripts as informational findings.
+- CLI process exit code: 0.
+
+**Deliberately failing check**
+- The test script printed SMOKE_TEST_FAILED to stderr and exited with code 1.
+- The runner correctly reported FAILED, exit code 1, CHECK_FAILED, and captured stderr.
+- Diagnostics correctly emitted an ERROR finding with code CHECK_FAILED and matching evidence.
+- The CLI process still returned exit code 0. This is a confirmed defect in the current CLI contract, not a Docker execution failure.
+
+## CLI exit-code contract and current defect
+
+agent/src/index.js parses --run and --approve, discovers checks, orchestrates requested execution, generates deterministic findings, and prints the report. The current final exit-code logic sets a failure code for orchestration failure and fatal exceptions, but does not derive the exit code from unsuccessful requested execution results or policy blocks.
+
+Target contract to implement and test:
+- Discovery-only mode returns 0 when discovery/report generation succeeds.
+- A requested execution returns 0 only when the requested checks complete successfully under the documented policy/result contract.
+- Failed, timed-out, blocked for missing approval, or otherwise unsuccessful requested checks return non-zero.
+- Invalid arguments, fatal errors, and orchestration failures return non-zero.
+
+The existing agent/test/cli.test.js covers missing path, --approve without --run, unknown options, and discovery-only behavior. It does not yet cover the exit code for a failed or successful requested execution. Add those regression tests before changing index.js.
+
+## Repository hygiene item
+
+The current GitHub tree also contains root-level fixture directories cli-smoke-test/, docker-smoke-test/, and test-malformed/, plus zero-byte files under agent/ named agent@1.0.0, cd, git, node, and npm. Their intent is not established by the available evidence. Review them with the developer before removing or retaining them; this documentation update does not change those files.
